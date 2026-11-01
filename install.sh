@@ -14,7 +14,7 @@ H="/home/$U"
 
 # --- Пакеты (Hyprland есть только в trixie-backports), без recommends = без мусора ---
 echo "deb http://deb.debian.org/debian trixie-backports main" > /etc/apt/sources.list.d/backports.list
-# contrib нужен только для Steam (steam-installer), i386 - для 32-битных библиотек Steam
+#
 echo "deb http://deb.debian.org/debian trixie contrib" > /etc/apt/sources.list.d/contrib.list
 dpkg --add-architecture i386
 apt-get update
@@ -30,7 +30,7 @@ apt-get install -y --no-install-recommends -t trixie-backports \
   adwaita-icon-theme gvfs gvfs-daemons udisks2 \
   firefox-esr firefox-esr-l10n-ru \
   telegram-desktop \
-  steam-installer mesa-vulkan-drivers:i386 libgl1-mesa-dri:i386
+  mesa-vulkan-drivers:i386 libgl1-mesa-dri:i386
 usermod -aG sudo,video "$U"
 
 # --- Установщик .deb: двойной щелчок по файлу в PCMan открывает окно установки с зависимостями ---
