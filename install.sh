@@ -12,9 +12,13 @@ U="${1:-$(getent passwd 1000 | cut -d: -f1 || true)}"
 [ -n "$U" ] || { echo "Не нашёл пользователя. Запусти: bash install.sh ИМЯ"; exit 1; }
 H="/home/$U"
 
+# --- Автоматическое принятие лицензии Steam EULA ---
+echo steam steam/question select "I AGREE" | debconf-set-selections
+echo steam steam/license note "" | debconf-set-selections
+
 # --- Пакеты (Hyprland есть только в trixie-backports), без recommends = без мусора ---
 echo "deb http://deb.debian.org/debian trixie-backports main" > /etc/apt/sources.list.d/backports.list
-# contrib нужен только для Steam (steam-installer), i386 - для 32-битных библиотек Steam
+# contrib нужен только для Steam, i386 - для 32-битных библиотек Steam
 echo "deb http://deb.debian.org/debian trixie contrib" > /etc/apt/sources.list.d/contrib.list
 dpkg --add-architecture i386
 apt-get update
@@ -30,7 +34,7 @@ apt-get install -y --no-install-recommends -t trixie-backports \
   adwaita-icon-theme gvfs gvfs-daemons udisks2 \
   firefox-esr firefox-esr-l10n-ru \
   telegram-desktop \
-  steam-installer mesa-vulkan-drivers:i386 libgl1-mesa-dri:i386
+  steam mesa-vulkan-drivers:i386 libgl1-mesa-dri:i386
 usermod -aG sudo,video "$U"
 
 # --- Установщик .deb: двойной щелчок по файлу в PCMan открывает окно установки с зависимостями ---
@@ -278,9 +282,6 @@ StartupWMClass=firefox-esr
 EOF
 
 # fastfetch: своё фото вместо логотипа Debian
-#   поставить фото:  cp /путь/к/фото.png ~/.config/fastfetch/logo.png   (только PNG, лучше квадратное)
-#   убрать фото:     rm ~/.config/fastfetch/logo.png
-# Без фото логотипа нет вообще. Вернуть логотип Debian: замени "--logo none" на пустое место.
 w "$H/.config/fastfetch/show.sh" <<'EOF'
 #!/bin/sh
 LOGO="$HOME/.config/fastfetch/logo.png"
@@ -355,7 +356,7 @@ EOF
 # Приглашение в терминале: значок, имя, папка (как на скриншотах)
 grep -qs 'PS1-hypr' "$H/.bashrc" || cat >> "$H/.bashrc" <<'EOF'
 # PS1-hypr
-PS1='\[\e[90m\] \[\e[97m\]\u \[\e[90m\] \[\e[37m\]\w \[\e[0m\]\$ '
+PS1='\e[90m \e[97m\u \e[90m \e[37m\w \e[0m\$ '
 EOF
 
 # --- Автозапуск Hyprland на первом TTY ---
