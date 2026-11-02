@@ -14,9 +14,6 @@ H="/home/$U"
 
 # --- Пакеты (Hyprland есть только в trixie-backports), без recommends = без мусора ---
 echo "deb http://deb.debian.org/debian trixie-backports main" > /etc/apt/sources.list.d/backports.list
-#
-echo "deb http://deb.debian.org/debian trixie contrib" > /etc/apt/sources.list.d/contrib.list
-dpkg --add-architecture i386
 apt-get update
 apt-get install -y --no-install-recommends sudo
 apt-get install -y --no-install-recommends -t trixie-backports \
@@ -27,10 +24,19 @@ apt-get install -y --no-install-recommends -t trixie-backports \
   fonts-dejavu-core fonts-font-awesome polkitd lxqt-policykit \
   fastfetch cava pcmanfm \
   dbus-user-session xdg-utils xwayland \
-  adwaita-icon-theme gvfs gvfs-daemons udisks2 \
+  gvfs gvfs-daemons udisks2 \
   firefox-esr firefox-esr-l10n-ru \
   telegram-desktop \
-  mesa-vulkan-drivers:i386 libgl1-mesa-dri:i386
+  flatpak curl
+
+# --- Steam через Flatpak: сам Steam, но без i386-мусора в системе ---
+if command -v flatpak >/dev/null 2>&1; then
+  flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+  flatpak install -y flathub com.valvesoftware.Steam || echo "!! Steam (flatpak) не установился (скрипт продолжает работу)"
+else
+  echo "!! flatpak не установился — Steam пропущен"
+fi
+
 usermod -aG sudo,video "$U"
 
 # --- Установщик .deb: двойной щелчок по файлу в PCMan открывает окно установки с зависимостями ---
@@ -47,14 +53,29 @@ EOF
 chmod 755 /usr/local/bin/deb-install
 
 # --- Happ (официальный .deb с GitHub; в репозиториях Debian его нет) ---
-HAPP_URL="$(curl -fsSL https://api.github.com/repos/Happ-proxy/happ-desktop/releases/latest 2>/dev/null \
-  | grep -o 'https://[^"]*\.deb' | grep -vi 'arm' | head -n1 || true)"
-if [ -n "$HAPP_URL" ] && curl -fL -o /tmp/happ.deb "$HAPP_URL"; then
-  apt-get install -y --no-install-recommends /tmp/happ.deb || echo "!! Happ не установился (скрипт продолжает работу)"
-  rm -f /tmp/happ.deb
+if command -v curl >/dev/null 2>&1; then
+  HAPP_URL="$(curl -fsSL https://api.github.com/repos/Happ-proxy/happ-desktop/releases/latest 2>/dev/null \
+    | grep -o 'https://[^"]*\.deb' | grep -vi 'arm' | head -n1 || true)"
+  if [ -n "$HAPP_URL" ] && curl -fL -o /tmp/happ.deb "$HAPP_URL"; then
+    apt-get install -y --no-install-recommends /tmp/happ.deb || echo "!! Happ не установился (скрипт продолжает работу)"
+    rm -f /tmp/happ.deb
+  else
+    echo "!! Happ не скачался автоматически. Скачай .deb (Linux x64) со страницы"
+    echo "!! https://github.com/Happ-proxy/happ-desktop/releases и открой файл двойным щелчком в PCMan."
+  fi
+
+  # --- Limusic (официальный .deb с GitHub Releases; в репозиториях Debian его нет) ---
+  LIMUSIC_URL="$(curl -fsSL https://api.github.com/repos/SimoHypers/limusic/releases/latest 2>/dev/null \
+    | grep -o 'https://[^"]*_amd64\.deb' | head -n1 || true)"
+  if [ -n "$LIMUSIC_URL" ] && curl -fL -o /tmp/limusic.deb "$LIMUSIC_URL"; then
+    apt-get install -y --no-install-recommends /tmp/limusic.deb || echo "!! Limusic не установился (скрипт продолжает работу)"
+    rm -f /tmp/limusic.deb
+  else
+    echo "!! Limusic не скачался автоматически. Скачай .deb (Linux amd64) со страницы"
+    echo "!! https://github.com/SimoHypers/limusic/releases и открой файл двойным щелчком в PCMan."
+  fi
 else
-  echo "!! Happ не скачался автоматически. Скачай .deb (Linux x64) со страницы"
-  echo "!! https://github.com/Happ-proxy/happ-desktop/releases и открой файл двойным щелчком в PCMan."
+  echo "!! curl не установился — Happ и Limusic пропущены"
 fi
 
 # --- Конфиги (старые сохраняются как .bak) ---
@@ -69,6 +90,7 @@ monitor = , preferred, auto, 1
 $mod = SUPER
 
 # Обои: любой файл ~/Pictures/wall/wall.png (или wall.jpg), если файла нет - тёмный фон
+exec-once = dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP
 exec-once = sh ~/.config/hypr/wallpaper.sh
 exec-once = waybar
 exec-once = lxqt-policykit-agent
@@ -359,11 +381,17 @@ PS1='\[\e[90m\] \[\e[97m\]\u \[\e[90m\] \[\e[37m\]\w \[\e[0m\]\$ '
 EOF
 
 # --- Автозапуск Hyprland на первом TTY ---
-grep -qs Hyprland "$H/.bash_profile" || \
-  echo '[ -z "$WAYLAND_DISPLAY" ] && [ "$XDG_VTNR" = 1 ] && exec Hyprland' >> "$H/.bash_profile"
+if ! grep -qs Hyprland "$H/.bash_profile"; then
+  cat >> "$H/.bash_profile" <<'EOF'
+if [ -z "$WAYLAND_DISPLAY" ] && [ "${XDG_VTNR:-}" = 1 ]; then
+  Hyprland || exec bash
+fi
+EOF
+fi
 
-mkdir -p "$H/Pictures/wall"
-chown -R "$U:$U" "$H/.config" "$H/Pictures" "$H/.bash_profile" "$H/.bashrc" "$H/.local/share/applications"
+mkdir -p "$H/Pictures/wall" "$H/.local/bin"
+chown -R "$U:$U" "$H/.config" "$H/Pictures" "$H/.bash_profile" "$H/.bashrc" \
+  "$H/.local" 2>/dev/null || true
 
 echo
 echo "Готово. Выйди (exit), зайди заново под $U на TTY1 - Hyprland запустится сам."
