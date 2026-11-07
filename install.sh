@@ -752,6 +752,59 @@ mkdir -p "$(dirname "$1")"
 if [ -f "$1" ]; then cp -f "$1" "$1.bak"; fi
 cat > "$1"
 }
+# --- Быстрое закрытие окон (Super+Shift+Q: зажать и водить курсором) ---
+cat > "$H/.config/hypr/quick-kill.sh" <<'EOF'
+#!/usr/bin/env python3
+import subprocess
+import json
+import time
+
+def get_cursor():
+try:
+out = subprocess.run(['hyprctl', 'cursorpos', '-j'], capture_output=True, text=True, timeout=1).stdout
+data = json.loads(out)
+return data['x'], data['y']
+except:
+return None, None
+
+def get_window_at(x, y):
+try:
+out = subprocess.run(['hyprctl', 'clients', '-j'], capture_output=True, text=True, timeout=1).stdout
+clients = json.loads(out)
+for c in clients:
+cx, cy = c['at']
+cw, ch = c['size']
+if cx <= x <= cx + cw and cy <= y <= cy + ch:
+return c['address']
+except:
+pass
+return None
+
+def close_window(addr):
+subprocess.run(['hyprctl', 'dispatch', 'closewindow', f'address:{addr}'],
+capture_output=True, timeout=1)
+
+def main():
+end_time = time.time() + 1.5
+last_kill = 0
+while time.time() < end_time:
+now = time.time()
+if now - last_kill < 0.4:
+time.sleep(0.05)
+continue
+x, y = get_cursor()
+if x is None:
+break
+addr = get_window_at(x, y)
+if addr:
+close_window(addr)
+last_kill = now
+time.sleep(0.05)
+
+if __name__ == '__main__':
+main()
+EOF
+chmod 755 "$H/.config/hypr/quick-kill.sh"
 w "$H/.config/hypr/hyprland.conf" <<'EOF'
 monitor = , preferred, auto, 1
 $mod = SUPER
@@ -801,6 +854,7 @@ bind = $mod, B, exec, firefox-esr
 bind = $mod, E, exec, files
 bind = $mod, W, exec, sh ~/.config/hypr/wallpaper.sh
 bind = $mod, Q, killactive
+bind = $mod SHIFT, Q, exec, ~/.config/hypr/quick-kill.sh
 bind = $mod, F, fullscreen
 bind = $mod, V, togglefloating
 bind = $mod, left, movefocus, l
@@ -1064,3 +1118,7 @@ echo "Проверка NVIDIA после перезагрузки:  nvidia-smi"
 echo "Steam: запусти из лаунчера (Super+D) уже после входа в Hyprland - он докачает клиент при первом запуске."
 echo "Игры на 1650M: в Steam -> Свойства игры -> Параметры запуска:"
 echo "  __NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only __GLX_VENDOR_LIBRARY_NAME=nvidia %command%"
+echo
+echo "Закрытие окон:"
+echo "  Super+Q          - закрыть активное окно"
+echo "  Super+Shift+Q    - зажать и водить курсором (закрывает окна под курсором, 1.5 сек)"
