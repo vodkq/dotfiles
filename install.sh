@@ -796,7 +796,7 @@ disable_hyprland_logo = true
 disable_splash_rendering = true
 }
 bind = $mod, Return, exec, kitty sh ~/.config/fastfetch/show.sh
-bind = $mod, D, exec, pkill wofi 2>/dev/null; sleep 0.1; wofi --show drun
+bind = $mod, D, exec, bash -c 'pkill wofi 2>/dev/null; sleep 0.1; wofi --show drun'
 bind = $mod, B, exec, firefox-esr
 bind = $mod, E, exec, files
 bind = $mod, W, exec, sh ~/.config/hypr/wallpaper.sh
