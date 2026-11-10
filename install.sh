@@ -960,53 +960,12 @@ if __name__ == "__main__":
 main()
 MPLAYER_EOF
 chmod 755 /usr/local/bin/musicplayer
-gh_deb() {
-local repo="$1" name="$2" re="$3" json url sums want have
-json="$(curl -fsSL "https://api.github.com/repos/$repo/releases?per_page=10" 2>/dev/null || true)"
-url="$(printf '%s' "$json" | grep -o 'https://[^"]*\.deb' | grep -viE 'arm|aarch' | grep -iE "$re" | head -n1 || true)"
-if [ -z "$url" ]; then
-url="$(printf '%s' "$json" | grep -o 'https://[^"]*\.deb' | grep -viE 'arm|aarch' | head -n1 || true)"
-fi
-if [ -z "$url" ] || ! curl -fL -o "/tmp/$name.deb" "$url"; then
-echo "!! $name не скачался. Скачай .deb вручную и открой в Files (Super+E)."
-return 0
-fi
-sums="$(curl -fsSL "${url%/*}/SHA256SUMS.txt" 2>/dev/null || true)"
-if [ -n "$sums" ]; then
-want="$(printf '%s\n' "$sums" | grep -F "$(basename "$url")" | awk '{print $1}' | head -n1 || true)"
-have="$(sha256sum "/tmp/$name.deb" | awk '{print $1}')"
-if [ -n "$want" ] && [ "$want" != "$have" ]; then
-echo "!! $name: контрольная сумма НЕ совпала"
-rm -f "/tmp/$name.deb"
-return 0
-fi
-fi
-apt-get install -y --no-install-recommends "/tmp/$name.deb" || echo "!! $name не установился"
-rm -f "/tmp/$name.deb"
-}
-install_deb_url() {
-local url="$1" name="$2"
-if ! curl -fL -o "/tmp/$name.deb" "$url"; then
-echo "!! $name не скачался ($url)."
-return 0
-fi
-apt-get install -y --no-install-recommends "/tmp/$name.deb" || echo "!! $name не установился"
-rm -f "/tmp/$name.deb"
-}
-if command -v curl >/dev/null 2>&1; then
-install_deb_url https://github.com/Happ-proxy/happ-desktop/releases/latest/download/Happ.linux.x64.deb happ
-gh_deb storytold/photocraft photocraft 'amd64|x86_64|x64'
-install_deb_url https://github.com/ONLYOFFICE/DesktopEditors/releases/latest/download/onlyoffice-desktopeditors_amd64.deb onlyoffice
-gh_deb PrismLauncher/PrismLauncher prismlauncher 'amd64'
-else
-echo "!! curl не установился - приложения пропущены"
-fi
 w() {
 mkdir -p "$(dirname "$1")"
 if [ -f "$1" ]; then cp -f "$1" "$1.bak"; fi
 cat > "$1"
 }
-cat > "$H/.config/hypr/quick-kill.sh" <<'EOF'
+w "$H/.config/hypr/quick-kill.sh" <<'EOF'
 #!/usr/bin/env python3
 import subprocess, json, time
 def get_cursor():
@@ -1179,7 +1138,7 @@ w "$H/.config/waybar/config.jsonc" <<'EOF'
 "backlight": { "format": " {percent}%" },
 "battery": {
 "format": "{icon} {capacity}%",
-"format-icons": ["", "", "", "", ""]
+"format-icons": ["", "", "", "", ""]
 }
 }
 EOF
@@ -1328,6 +1287,53 @@ fi
 mkdir -p "$H/Pictures/wall"
 chown -R "$U:$U" "$H/.config" "$H/Pictures" "$H/.bash_profile" "$H/.bashrc" \
 "$H/.local" 2>/dev/null || true
+gh_deb() {
+local repo="$1" name="$2" re="$3" json url sums want have
+json="$(curl -fsSL "https://api.github.com/repos/$repo/releases?per_page=10" 2>/dev/null || true)"
+url="$(printf '%s' "$json" | grep -o 'https://[^"]*\.deb' | grep -viE 'arm|aarch' | grep -iE "$re" | head -n1 || true)"
+if [ -z "$url" ]; then
+url="$(printf '%s' "$json" | grep -o 'https://[^"]*\.deb' | grep -viE 'arm|aarch' | head -n1 || true)"
+fi
+if [ -z "$url" ] || ! curl -fL -o "/tmp/$name.deb" "$url"; then
+echo "!! $name не скачался автоматически. Скачай .deb (Linux x64) со страницы"
+echo "!! https://github.com/$repo/releases и открой его в файловом менеджере (Super+E) двойным щелчком."
+return 0
+fi
+sums="$(curl -fsSL "${url%/*}/SHA256SUMS.txt" 2>/dev/null || true)"
+if [ -n "$sums" ]; then
+want="$(printf '%s\n' "$sums" | grep -F "$(basename "$url")" | awk '{print $1}' | head -n1 || true)"
+have="$(sha256sum "/tmp/$name.deb" | awk '{print $1}')"
+if [ -n "$want" ] && [ "$want" != "$have" ]; then
+echo "!! $name: контрольная сумма НЕ совпала, пакет не устанавливаю"
+rm -f "/tmp/$name.deb"
+return 0
+fi
+fi
+apt-get install -y --no-install-recommends "/tmp/$name.deb" \
+|| echo "!! $name не установился (скрипт продолжает работу)"
+rm -f "/tmp/$name.deb"
+}
+install_deb_url() {
+local url="$1" name="$2"
+if ! curl -fL -o "/tmp/$name.deb" "$url"; then
+echo "!! $name не скачался ($url)."
+echo "!! Скачай .deb вручную с сайта разработчика и открой его двойным щелчком в Files (Super+E)."
+return 0
+fi
+apt-get install -y --no-install-recommends "/tmp/$name.deb" \
+|| echo "!! $name не установился (скрипт продолжает работу)"
+rm -f "/tmp/$name.deb"
+}
+if command -v curl >/dev/null 2>&1; then
+install_deb_url https://github.com/Happ-proxy/happ-desktop/releases/latest/download/Happ.linux.x64.deb happ
+gh_deb storytold/photocraft photocraft 'amd64|x86_64|x64'
+install_deb_url https://github.com/ONLYOFFICE/DesktopEditors/releases/latest/download/onlyoffice-desktopeditors_amd64.deb onlyoffice
+apt-get install -y --no-install-recommends prismlauncher \
+|| gh_deb PrismLauncher/PrismLauncher prismlauncher 'amd64' \
+|| echo "!! PrismLauncher не установился - поставь вручную из репозитория: apt install prismlauncher"
+else
+echo "!! curl не установился - дополнительные приложения пропущены"
+fi
 if apt-get install -y --no-install-recommends \
 linux-headers-amd64 nvidia-driver nvidia-vulkan-icd; then
 apt-get install -y --no-install-recommends nvidia-driver-libs-i386 \
