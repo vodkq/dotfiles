@@ -24,7 +24,7 @@ dbus-user-session xdg-utils xwayland \
 adwaita-icon-theme udisks2 \
 firefox-esr firefox-esr-l10n-ru \
 telegram-desktop curl \
-vlc python3-pyqt6 python3-vlc yt-dlp
+vlc python3-pyqt6 python3-vlc yt-dlp qt6-wayland
 echo
 echo "=== Steam: запускается установщик. Если появится окно с лицензией - прими её (I AGREE). ==="
 if ( exec </dev/tty ) 2>/dev/null; then
