@@ -27,8 +27,7 @@ fastfetch cava python3-gi gir1.2-gtk-3.0 mesa-vulkan-drivers \
 dbus-user-session xdg-utils xwayland \
 adwaita-icon-theme udisks2 \
 firefox-esr firefox-esr-l10n-ru \
-telegram-desktop curl \
-vlc python3-pyqt6 python3-vlc yt-dlp qt6-wayland
+telegram-desktop curl
 echo
 echo "=== Steam: запускается установщик. Если появится окно с лицензией - прими её (I AGREE). ==="
 if ( exec </dev/tty ) 2>/dev/null; then
@@ -764,28 +763,45 @@ EOF
 chmod 755 /usr/local/bin/files
 cat > /usr/local/bin/power-menu <<'EOF'
 #!/usr/bin/env python3
-import gi
 import os
+import re
 import subprocess
+import gi
 gi.require_version("Gtk", "3.0")
-from gi.repository import Gtk, Gdk, GLib
+from gi.repository import Gdk, GLib, Gtk
 
 LOCK = "/tmp/power-menu.pid"
+CSS = b"""
+* { font-family: "DejaVu Sans Mono", "FontAwesome", monospace; }
+window { background-color: rgba(6,6,8,0.60); }
+.card { background-color: rgba(14,14,16,0.80); border: 1px solid rgba(255,255,255,0.40);
+border-radius: 20px; padding: 22px 24px 14px 24px; }
+button { background-image: none; background-color: rgba(255,255,255,0.05); color: #e6e6e6;
+border: 1px solid rgba(255,255,255,0.28); border-radius: 16px; box-shadow: none; padding: 0; }
+button:hover, button:focus { background-color: rgba(255,255,255,0.16); border-color: rgba(255,255,255,0.80); }
+button.danger { color: #ff8a80; border-color: rgba(255,107,107,0.45); }
+button.danger:hover, button.danger:focus { background-color: rgba(255,107,107,0.22); border-color: rgba(255,107,107,0.90); }
+.icon { font-size: 30px; }
+.name { font-size: 11px; }
+.key { color: #8a8a8a; font-size: 9px; }
+.hint { color: #6f6f6f; font-size: 9px; }
+"""
 
-def alive(pid):
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
+ITEMS = (
+    ("\uf011", "Выключить", "P", "poweroff", True),
+    ("\uf021", "Перезагрузить", "R", "reboot", False),
+    ("\uf186", "Сон", "S", "suspend", False),
+    ("\uf08b", "Выйти", "E", "exit", False),
+)
 
 def running():
     try:
         with open(LOCK) as f:
             pid = int(f.read().strip())
-        return alive(pid)
+        os.kill(pid, 0)
+        return pid
     except Exception:
-        return False
+        return 0
 
 class PowerMenu(Gtk.Window):
     def __init__(self):
@@ -796,49 +812,78 @@ class PowerMenu(Gtk.Window):
         visual = screen.get_rgba_visual()
         if visual:
             self.set_visual(visual)
-        css = Gtk.CssProvider()
-        css.load_from_data(b".card { border-radius: 16px; } .pbtn { border-radius: 10px; padding: 10px 14px; font-size: 14px; font-weight: bold; }")
-        Gtk.StyleContext.add_provider_for_screen(screen, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        for rule in re.findall(rb"[^{}]+\{[^{}]*\}", CSS):
+            prov = Gtk.CssProvider()
+            try:
+                prov.load_from_data(rule)
+            except GLib.Error:
+                continue
+            Gtk.StyleContext.add_provider_for_screen(screen, prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
         bg = Gtk.EventBox()
-        bg.override_background_color(Gtk.StateFlags.NORMAL, Gdk.RGBA(0, 0, 0, 0.55))
+        bg.set_visible_window(False)
         bg.connect("button-press-event", lambda w, e: self.quit())
-        card = Gtk.EventBox()
+        hold = Gtk.EventBox()
+        hold.set_visible_window(False)
+        hold.set_halign(Gtk.Align.CENTER)
+        hold.set_valign(Gtk.Align.CENTER)
+        hold.connect("button-press-event", lambda w, e: True)
+        card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
         card.get_style_context().add_class("card")
-        card.override_background_color(Gtk.StateFlags.NORMAL, Gdk.RGBA(0.07, 0.07, 0.09, 0.95))
-        card.set_halign(Gtk.Align.CENTER)
-        card.set_valign(Gtk.Align.CENTER)
-        card.connect("button-press-event", lambda w, e: True)
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        box.set_size_request(340, -1)
-        box.set_margin_start(24)
-        box.set_margin_end(24)
-        box.set_margin_top(20)
-        box.set_margin_bottom(20)
-        for label, cmd, rgb in (("Выключить", "poweroff", (0.80, 0.20, 0.20)),
-                                ("Перезагрузить", "reboot", (0.85, 0.55, 0.15)),
-                                ("Спящий режим", "suspend", (0.25, 0.45, 0.85))):
-            b = Gtk.Button(label=label)
-            b.get_style_context().add_class("pbtn")
-            b.override_background_color(Gtk.StateFlags.NORMAL, Gdk.RGBA(rgb[0], rgb[1], rgb[2], 1.0))
-            b.override_color(Gtk.StateFlags.NORMAL, Gdk.RGBA(1, 1, 1, 1))
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        self.buttons = []
+        self.keys = {}
+        for icon, name, key, cmd, danger in ITEMS:
+            b = Gtk.Button()
+            b.set_size_request(132, 112)
+            if danger:
+                b.get_style_context().add_class("danger")
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            col.set_valign(Gtk.Align.CENTER)
+            for text, cls in ((icon, "icon"), (name, "name"), (key, "key")):
+                lab = Gtk.Label(label=text)
+                lab.get_style_context().add_class(cls)
+                col.pack_start(lab, False, False, 0)
+            b.add(col)
             b.connect("clicked", lambda w, c=cmd: self.run(c))
-            box.pack_start(b, False, False, 0)
-        card.add(box)
-        bg.add(card)
+            row.pack_start(b, False, False, 0)
+            self.buttons.append(b)
+            self.keys[key.lower()] = cmd
+        hint = Gtk.Label(label="← →  выбор    Enter  подтвердить    Esc  закрыть")
+        hint.get_style_context().add_class("hint")
+        card.pack_start(row, False, False, 0)
+        card.pack_start(hint, False, False, 0)
+        hold.add(card)
+        bg.add(hold)
         self.add(bg)
         self.connect("key-press-event", self.on_key)
         self.fullscreen()
         with open(LOCK, "w") as f:
             f.write(str(os.getpid()))
 
+    def focus_step(self, d):
+        cur = self.get_focus()
+        i = self.buttons.index(cur) if cur in self.buttons else -1
+        self.buttons[(i + d) % len(self.buttons)].grab_focus()
+
     def on_key(self, w, ev):
-        if Gdk.keyval_name(ev.keyval) == "Escape":
+        k = Gdk.keyval_name(ev.keyval) or ""
+        if k == "Escape":
             self.quit()
-            return True
-        return False
+        elif k in ("Left", "Up", "ISO_Left_Tab"):
+            self.focus_step(-1)
+        elif k in ("Right", "Down", "Tab"):
+            self.focus_step(1)
+        elif k.lower() in self.keys:
+            self.run(self.keys[k.lower()])
+        else:
+            return False
+        return True
 
     def run(self, cmd):
-        subprocess.Popen(["systemctl", cmd])
+        if cmd == "exit":
+            subprocess.Popen(["hyprctl", "dispatch", "exit"])
+        else:
+            subprocess.Popen(["systemctl", cmd])
         self.quit()
 
     def quit(self):
@@ -852,9 +897,8 @@ class PowerMenu(Gtk.Window):
 def main():
     GLib.set_prgname("power-menu")
     GLib.set_application_name("power-menu")
-    if running():
-        with open(LOCK) as f:
-            pid = int(f.read().strip())
+    pid = running()
+    if pid:
         try:
             os.kill(pid, 15)
         except OSError:
@@ -867,1187 +911,19 @@ def main():
     w = PowerMenu()
     w.connect("destroy", Gtk.main_quit)
     w.show_all()
+    w.buttons[0].grab_focus()
     Gtk.main()
 
 if __name__ == "__main__":
     main()
 EOF
 chmod 755 /usr/local/bin/power-menu
-cat > /usr/local/bin/musicplayer <<'MPLAYER_EOF'
-#!/usr/bin/env python3
-import sys, os, json, shutil, subprocess, random, threading, time
-from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
-from PyQt6.QtCore import Qt, QTimer, QObject, pyqtSignal, QSize, QUrl, QRectF
-from PyQt6.QtGui import QColor, QPixmap, QIcon, QPainter, QPainterPath, QShortcut, QKeySequence, QFontMetrics
-from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QFrame, QWidget, QVBoxLayout, QHBoxLayout,
-                             QGridLayout, QPushButton, QLabel, QLineEdit, QListWidget, QListWidgetItem,
-                             QSlider, QStackedWidget, QStyle, QMenu, QColorDialog, QFileDialog, QScrollArea)
-import vlc
-
-CFG_DIR = Path.home() / ".config" / "musicplayer"
-CFG_DIR.mkdir(parents=True, exist_ok=True)
-CFG_FILE = CFG_DIR / "settings.json"
-FAV_FILE = CFG_DIR / "favorites.json"
-HIST_FILE = CFG_DIR / "history.json"
-RECS_FILE = CFG_DIR / "recs.json"
-UR = Qt.ItemDataRole.UserRole
-AUDIO_EXT = {".mp3", ".flac", ".ogg", ".opus", ".m4a", ".wav", ".aac", ".wma"}
-
-THEMES = {
-    "Неон":     dict(bg="#0d0b1a", panel="#17133a", text="#eae6ff", sub="#8f87c4", accent="#b06cff", accent2="#ff4fa3", radius=16, opacity=0.95),
-    "Закат":    dict(bg="#1a0f12", panel="#2c161b", text="#fff0e8", sub="#c99a8a", accent="#ff7a45", accent2="#ffc15a", radius=16, opacity=0.95),
-    "Океан":    dict(bg="#07131c", panel="#0d2433", text="#e4f6ff", sub="#7fb0c8", accent="#2cc4ff", accent2="#3dffc0", radius=16, opacity=0.95),
-    "Лес":      dict(bg="#0c150f", panel="#14251a", text="#e8f5ea", sub="#86a98d", accent="#4cd97b", accent2="#c8f060", radius=16, opacity=0.95),
-    "Сакура":   dict(bg="#1a1018", panel="#2b1827", text="#ffeaf5", sub="#c496b4", accent="#ff7eb6", accent2="#c58cff", radius=18, opacity=0.95),
-    "Монохром": dict(bg="#0a0a0c", panel="#141416", text="#e6e6e6", sub="#8a8a8a", accent="#ffffff", accent2="#9a9a9a", radius=14, opacity=0.80),
-    "AMOLED":   dict(bg="#000000", panel="#0c0c0c", text="#ffffff", sub="#8a8a8a", accent="#00e0a4", accent2="#00b4ff", radius=12, opacity=1.0),
-    "Светлая":  dict(bg="#f3f1f8", panel="#ffffff", text="#1d1b26", sub="#6d6880", accent="#6c4cff", accent2="#ff4f8b", radius=16, opacity=1.0),
-}
-DEFAULT_CFG = {"theme": "Неон", "custom": {}, "font": 11, "proxy": "", "music_dir": "", "volume": 70,
-               "shuffle": False, "repeat": False, "autoplay": True}
-COLOR_KEYS = [("bg", "Фон"), ("panel", "Панели"), ("text", "Текст"), ("sub", "Доп. текст"),
-              ("accent", "Акцент"), ("accent2", "Акцент 2")]
-
-
-def load_json(path, default):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return default
-
-
-def save_json(path, data):
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=1)
-    except Exception:
-        pass
-
-
-def rgba(color, a):
-    c = QColor(color)
-    return "rgba(%d,%d,%d,%d)" % (c.red(), c.green(), c.blue(), int(max(0.0, min(1.0, float(a))) * 255))
-
-
-def fmt(sec):
-    try:
-        sec = int(sec or 0)
-    except Exception:
-        sec = 0
-    if sec <= 0:
-        return "--:--"
-    return "%d:%02d" % (sec // 60, sec % 60) if sec < 3600 else "%d:%02d:%02d" % (sec // 3600, sec % 3600 // 60, sec % 60)
-
-
-def rounded(pm, size, radius):
-    pm = pm.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
-    out = QPixmap(size, size)
-    out.fill(Qt.GlobalColor.transparent)
-    p = QPainter(out)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    path = QPainterPath()
-    path.addRoundedRect(QRectF(0, 0, size, size), radius, radius)
-    p.setClipPath(path)
-    p.drawPixmap((size - pm.width()) // 2, (size - pm.height()) // 2, pm)
-    p.end()
-    return out
-
-
-def placeholder(size, radius, color):
-    out = QPixmap(size, size)
-    out.fill(Qt.GlobalColor.transparent)
-    p = QPainter(out)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    c = QColor(color)
-    c.setAlpha(70)
-    path = QPainterPath()
-    path.addRoundedRect(QRectF(0, 0, size, size), radius, radius)
-    p.fillPath(path, c)
-    c.setAlpha(200)
-    p.setPen(c)
-    p.drawText(QRectF(0, 0, size, size), Qt.AlignmentFlag.AlignCenter, "♪")
-    p.end()
-    return out
-
-
-def qss(t, fs):
-    r = int(t["radius"])
-    o = float(t["opacity"])
-    bg, panel, tx, sub, a, a2 = t["bg"], t["panel"], t["text"], t["sub"], t["accent"], t["accent2"]
-    grad = "qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 %s,stop:1 %s)" % (a, a2)
-    ir = max(r - 4, 0)
-    return f"""
-* {{ font-family: "DejaVu Sans", "Noto Sans", sans-serif; font-size: {fs}px; color: {tx}; outline: none; }}
-QFrame#root {{ background: {rgba(bg, o)}; border-radius: {r + 6}px; }}
-QFrame#side, QFrame#bar {{ background: {rgba(panel, o)}; border-radius: {r}px; }}
-QLabel {{ background: transparent; }}
-QLabel#logo {{ font-size: {fs + 7}px; font-weight: bold; color: {a}; }}
-QLabel#h1 {{ font-size: {fs + 6}px; font-weight: bold; }}
-QLabel#h2 {{ font-size: {fs + 1}px; font-weight: bold; color: {a}; }}
-QLabel#sub {{ color: {sub}; }}
-QLabel#np {{ font-size: {fs + 1}px; font-weight: bold; }}
-QPushButton {{ background: {rgba(tx, 0.08)}; border: none; border-radius: {r}px; padding: 8px 16px; }}
-QPushButton:hover {{ background: {rgba(tx, 0.16)}; }}
-QPushButton#nav {{ text-align: left; padding: 11px 16px; background: transparent; }}
-QPushButton#nav:hover {{ background: {rgba(tx, 0.09)}; }}
-QPushButton#nav:checked {{ background: {grad}; color: {bg}; font-weight: bold; }}
-QPushButton#ico {{ background: transparent; padding: 6px 10px; font-size: {fs + 5}px; color: {sub}; }}
-QPushButton#ico:hover {{ background: {rgba(tx, 0.12)}; color: {tx}; }}
-QPushButton#ico:checked {{ color: {a}; }}
-QPushButton#play {{ background: {grad}; color: {bg}; border-radius: 24px; min-width: 48px; max-width: 48px;
-                   min-height: 48px; max-height: 48px; padding: 0; font-size: {fs + 6}px; }}
-QPushButton#play:hover {{ background: {a2}; }}
-QPushButton#primary {{ background: {grad}; color: {bg}; font-weight: bold; }}
-QPushButton#primary:hover {{ background: {a2}; }}
-QPushButton#preset {{ font-weight: bold; padding: 14px 10px; border: 2px solid transparent; }}
-QPushButton#preset:checked {{ border: 2px solid {tx}; }}
-QLineEdit {{ background: {rgba(tx, 0.09)}; border: 1px solid transparent; border-radius: {r}px; padding: 9px 14px;
-            selection-background-color: {a}; selection-color: {bg}; }}
-QLineEdit:focus {{ border: 1px solid {a}; }}
-QListWidget {{ background: transparent; border: none; }}
-QListWidget::item {{ padding: 6px; border-radius: {ir}px; margin: 2px 4px; }}
-QListWidget::item:hover {{ background: {rgba(tx, 0.08)}; }}
-QListWidget::item:selected {{ background: {rgba(a, 0.30)}; color: {tx}; }}
-QSlider::groove:horizontal {{ height: 5px; background: {rgba(tx, 0.18)}; border-radius: 2px; }}
-QSlider::sub-page:horizontal {{ background: {grad}; border-radius: 2px; }}
-QSlider::handle:horizontal {{ background: {tx}; width: 13px; height: 13px; margin: -4px 0; border-radius: 6px; }}
-QScrollBar:vertical {{ background: transparent; width: 8px; margin: 0; }}
-QScrollBar::handle:vertical {{ background: {rgba(tx, 0.28)}; border-radius: 4px; min-height: 30px; }}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
-QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
-QScrollArea {{ background: transparent; border: none; }}
-QMenu {{ background: {panel}; border: 1px solid {rgba(tx, 0.18)}; border-radius: 8px; padding: 4px; }}
-QMenu::item {{ padding: 7px 20px; border-radius: 6px; }}
-QMenu::item:selected {{ background: {rgba(a, 0.40)}; }}
-QToolTip {{ background: {panel}; color: {tx}; border: 1px solid {a}; padding: 4px; }}
-"""
-
-
-def ytdlp(args, proxy="", timeout=90):
-    base = ["yt-dlp", "--no-warnings"]
-    if proxy:
-        base += ["--proxy", proxy]
-    extra = []
-    for rt in ("deno", "node"):
-        if shutil.which(rt):
-            extra = ["--js-runtimes", rt]
-            break
-    attempts = [extra, []] if extra else [[]]
-    last = "yt-dlp: неизвестная ошибка"
-    for ex in attempts:
-        try:
-            p = subprocess.run(base + ex + args, capture_output=True, text=True, timeout=timeout)
-        except FileNotFoundError:
-            raise RuntimeError("yt-dlp не установлен")
-        except subprocess.TimeoutExpired:
-            raise RuntimeError("таймаут: нет ответа от YouTube (VPN включён?)")
-        if p.returncode == 0:
-            return p.stdout
-        err = (p.stderr or "").strip()
-        last = err.splitlines()[-1] if err else last
-        if ex and ("no such option" in err.lower() or "unrecognized" in err.lower()):
-            continue
-        break
-    raise RuntimeError(last)
-
-
-def entry_to_track(e):
-    vid = e["id"]
-    return {"id": vid, "title": e.get("title") or "Без названия",
-            "artist": e.get("channel") or e.get("uploader") or "YouTube",
-            "duration": e.get("duration") or 0, "src": "yt",
-            "url": "https://www.youtube.com/watch?v=" + vid,
-            "thumb": "https://i.ytimg.com/vi/%s/mqdefault.jpg" % vid}
-
-
-def mix_tracks(vid, proxy="", n=30):
-    """Похожие треки: автоматический YouTube-микс (радио) от выбранного трека."""
-    out = ytdlp(["--flat-playlist", "--playlist-end", str(n), "-J",
-                 "https://www.youtube.com/watch?v=%s&list=RD%s" % (vid, vid)], proxy)
-    data = json.loads(out)
-    return [entry_to_track(e) for e in (data.get("entries") or []) if e and e.get("id")]
-
-
-def compute_recs(seeds, exclude, proxy):
-    """seeds: [(трек, вес)]. Трек, который всплывает в миксах нескольких любимых, получает больше очков."""
-    def one(item):
-        tr, w = item
-        try:
-            return w, mix_tracks(tr["id"], proxy), None
-        except Exception as ex:
-            return w, [], str(ex)
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        results = list(pool.map(one, seeds))
-    scores, info, errs = {}, {}, []
-    for w, lst, err in results:
-        if err:
-            errs.append(err)
-        n = max(len(lst), 1)
-        for rank, t in enumerate(lst):
-            if t["id"] in exclude:
-                continue
-            d = t.get("duration") or 0
-            if d and (d < 45 or d > 720):
-                continue
-            scores[t["id"]] = scores.get(t["id"], 0.0) + w * (1.0 - rank / n)
-            info[t["id"]] = t
-    if not info and errs:
-        raise RuntimeError(errs[0])
-    out, per = [], {}
-    for tid in sorted(scores, key=scores.get, reverse=True):
-        t = info[tid]
-        if per.get(t["artist"], 0) >= 3:
-            continue
-        per[t["artist"]] = per.get(t["artist"], 0) + 1
-        out.append(t)
-        if len(out) >= 40:
-            break
-    return out
-
-
-class Bus(QObject):
-    found = pyqtSignal(list)
-    failed = pyqtSignal(str)
-    resolved = pyqtSignal(int, str)
-    recs = pyqtSignal(list)
-    recfail = pyqtSignal(str)
-    similar = pyqtSignal(list)
-    radio = pyqtSignal(int, list)
-
-
-class ClickSlider(QSlider):
-    """Слайдер: клик по полосе сразу переносит ползунок."""
-    def _val(self, e):
-        return QStyle.sliderValueFromPosition(self.minimum(), self.maximum(), int(e.position().x()), max(self.width(), 1))
-
-    def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.LeftButton:
-            self.setValue(self._val(e))
-            self.setSliderDown(True)
-            e.accept()
-        else:
-            super().mousePressEvent(e)
-
-    def mouseMoveEvent(self, e):
-        if self.isSliderDown():
-            self.setValue(self._val(e))
-            e.accept()
-        else:
-            super().mouseMoveEvent(e)
-
-    def mouseReleaseEvent(self, e):
-        if self.isSliderDown():
-            self.setSliderDown(False)
-            e.accept()
-        else:
-            super().mouseReleaseEvent(e)
-
-
-class Player(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.cfg = dict(DEFAULT_CFG)
-        self.cfg.update(load_json(CFG_FILE, {}))
-        self.favs = load_json(FAV_FILE, [])
-        if not isinstance(self.favs, list):
-            self.favs = []
-        self.hist = load_json(HIST_FILE, {})
-        if not isinstance(self.hist, dict):
-            self.hist = {}
-        self.recs = load_json(RECS_FILE, [])
-        if not isinstance(self.recs, list):
-            self.recs = []
-        self.recs_started = False
-        self.counted = True
-        self.queue, self.idx, self.token = [], -1, 0
-        self.seeking = False
-        self.advanced = False
-        args = ["--no-video", "--quiet"]
-        if self.cfg.get("proxy", "").startswith("http"):
-            args.append("--http-proxy=" + self.cfg["proxy"])
-        self.vlc = vlc.Instance(*args)
-        self.mp = self.vlc.media_player_new()
-        self.mp.audio_set_volume(int(self.cfg.get("volume", 70)))
-        self.nam = QNetworkAccessManager(self)
-        self.pix = {}
-        self.bus = Bus()
-        self.bus.found.connect(self.on_found)
-        self.bus.failed.connect(self.on_failed)
-        self.bus.resolved.connect(self.on_resolved)
-        self.bus.recs.connect(self.on_recs)
-        self.bus.recfail.connect(self.on_recfail)
-        self.bus.similar.connect(self.on_similar)
-        self.bus.radio.connect(self.on_radio)
-        self.apply_timer = QTimer(self)
-        self.apply_timer.setSingleShot(True)
-        self.apply_timer.timeout.connect(self.apply_theme)
-        self.build_ui()
-        self.apply_theme()
-        self.goto(0)
-        self.load_local()
-        self.refresh_favs()
-        self.fill(self.recl, self.recs)
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.tick)
-        self.timer.start(300)
-        for key, fn in (("Space", self.toggle), ("Ctrl+Right", self.skip), ("Ctrl+Left", self.prev_track)):
-            QShortcut(QKeySequence(key), self, activated=fn)
-
-    # ---------- тема ----------
-    def theme(self):
-        if self.cfg["theme"] == "Свой" and self.cfg.get("custom"):
-            t = dict(THEMES["Неон"])
-            t.update(self.cfg["custom"])
-            return t
-        return dict(THEMES.get(self.cfg["theme"], THEMES["Неон"]))
-
-    def apply_theme(self):
-        t = self.theme()
-        self.setStyleSheet(qss(t, int(self.cfg["font"])))
-        self.ph = placeholder(56, max(int(t["radius"]) - 4, 4), t["accent"])
-        if hasattr(self, "cur_label"):
-            self.cur_label.setText("Сейчас: " + self.cfg["theme"])
-
-    def schedule_apply(self):
-        self.apply_timer.start(40)
-
-    def set_custom(self, t):
-        self.cfg["custom"] = {k: t[k] for k in t}
-        self.cfg["theme"] = "Свой"
-        for b in self.presets.values():
-            b.setChecked(False)
-        self.refresh_swatches()
-        self.schedule_apply()
-        save_json(CFG_FILE, self.cfg)
-
-    def choose_preset(self, name):
-        self.cfg["theme"] = name
-        for n, b in self.presets.items():
-            b.setChecked(n == name)
-        self.sync_controls()
-        self.apply_theme()
-        save_json(CFG_FILE, self.cfg)
-
-    def pick_color(self, key):
-        t = self.theme()
-        c = QColorDialog.getColor(QColor(t[key]), self, "Выбери цвет")
-        if c.isValid():
-            t[key] = c.name()
-            self.set_custom(t)
-
-    def refresh_swatches(self):
-        t = self.theme()
-        for key, b in self.swatches.items():
-            c = QColor(t[key])
-            fg = "#000" if c.lightness() > 140 else "#fff"
-            b.setStyleSheet("QPushButton { background: %s; color: %s; border: 1px solid %s; }" % (t[key], fg, rgba("#ffffff", 0.3)))
-
-    def sync_controls(self):
-        t = self.theme()
-        for s, v in ((self.s_radius, t["radius"]), (self.s_opacity, int(t["opacity"] * 100)), (self.s_font, self.cfg["font"])):
-            s.blockSignals(True)
-            s.setValue(int(v))
-            s.blockSignals(False)
-        for lab, v in ((self.l_radius, t["radius"]), (self.l_opacity, int(t["opacity"] * 100)), (self.l_font, self.cfg["font"])):
-            lab.setText(str(int(v)))
-        self.refresh_swatches()
-
-    # ---------- интерфейс ----------
-    def build_ui(self):
-        self.setWindowTitle("Музыка")
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.root = QFrame()
-        self.root.setObjectName("root")
-        self.setCentralWidget(self.root)
-        outer = QVBoxLayout(self.root)
-        outer.setContentsMargins(12, 12, 12, 12)
-        outer.setSpacing(12)
-        top = QHBoxLayout()
-        top.setSpacing(12)
-        outer.addLayout(top, 1)
-
-        side = QFrame()
-        side.setObjectName("side")
-        side.setFixedWidth(210)
-        sl = QVBoxLayout(side)
-        sl.setContentsMargins(12, 18, 12, 16)
-        sl.setSpacing(6)
-        logo = QLabel("♪  Музыка")
-        logo.setObjectName("logo")
-        sl.addWidget(logo)
-        sl.addSpacing(12)
-        self.stack = QStackedWidget()
-        self.nav = []
-        for i, name in enumerate(["Поиск", "Для тебя", "Моя музыка", "Любимые", "Оформление"]):
-            b = QPushButton(name)
-            b.setObjectName("nav")
-            b.setCheckable(True)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.clicked.connect(lambda _, i=i: self.goto(i))
-            sl.addWidget(b)
-            self.nav.append(b)
-        sl.addStretch(1)
-        hint = QLabel("Пробел — пауза\nCtrl+←/→ — трек")
-        hint.setObjectName("sub")
-        sl.addWidget(hint)
-        top.addWidget(side)
-        top.addWidget(self.stack, 1)
-
-        self.stack.addWidget(self.page_search())
-        self.stack.addWidget(self.page_recs())
-        self.stack.addWidget(self.page_local())
-        self.stack.addWidget(self.page_favs())
-        self.stack.addWidget(self.page_theme())
-        outer.addWidget(self.build_bar())
-
-    def make_list(self):
-        lst = QListWidget()
-        lst.setIconSize(QSize(56, 56))
-        lst.setVerticalScrollMode(QListWidget.ScrollMode.ScrollPerPixel)
-        lst.itemActivated.connect(lambda it, l=lst: self.activate(l, it))
-        lst.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        lst.customContextMenuRequested.connect(lambda pos, l=lst: self.list_menu(l, pos))
-        return lst
-
-    def page_search(self):
-        w = QWidget()
-        l = QVBoxLayout(w)
-        l.setContentsMargins(8, 8, 8, 0)
-        h = QLabel("Поиск музыки")
-        h.setObjectName("h1")
-        l.addWidget(h)
-        row = QHBoxLayout()
-        self.q = QLineEdit()
-        self.q.setPlaceholderText("Исполнитель, трек или альбом…")
-        self.q.returnPressed.connect(self.do_search)
-        b = QPushButton("Найти")
-        b.setObjectName("primary")
-        b.setCursor(Qt.CursorShape.PointingHandCursor)
-        b.clicked.connect(self.do_search)
-        row.addWidget(self.q, 1)
-        row.addWidget(b)
-        l.addLayout(row)
-        self.search_status = QLabel("Введи запрос и нажми Enter. Двойной клик / Enter по треку — играть, правый клик — в избранное.")
-        self.search_status.setObjectName("sub")
-        self.search_status.setWordWrap(True)
-        l.addWidget(self.search_status)
-        self.res = self.make_list()
-        l.addWidget(self.res, 1)
-        return w
-
-    def page_recs(self):
-        w = QWidget()
-        l = QVBoxLayout(w)
-        l.setContentsMargins(8, 8, 8, 0)
-        h = QLabel("Для тебя")
-        h.setObjectName("h1")
-        l.addWidget(h)
-        row = QHBoxLayout()
-        self.rec_status = QLabel("Подборка строится по тому, что ты слушаешь дольше 30 секунд и добавляешь в «Любимые». Скипнутое учитывается как «не нравится».")
-        self.rec_status.setObjectName("sub")
-        self.rec_status.setWordWrap(True)
-        b = QPushButton("Подобрать заново")
-        b.setObjectName("primary")
-        b.setCursor(Qt.CursorShape.PointingHandCursor)
-        b.clicked.connect(self.do_recs)
-        row.addWidget(self.rec_status, 1)
-        row.addWidget(b)
-        l.addLayout(row)
-        self.recl = self.make_list()
-        l.addWidget(self.recl, 1)
-        return w
-
-    def page_local(self):
-        w = QWidget()
-        l = QVBoxLayout(w)
-        l.setContentsMargins(8, 8, 8, 0)
-        h = QLabel("Моя музыка")
-        h.setObjectName("h1")
-        l.addWidget(h)
-        row = QHBoxLayout()
-        self.loc_label = QLabel("")
-        self.loc_label.setObjectName("sub")
-        b1 = QPushButton("Обновить")
-        b1.clicked.connect(self.load_local)
-        b2 = QPushButton("Выбрать папку…")
-        b2.clicked.connect(self.pick_dir)
-        row.addWidget(self.loc_label, 1)
-        row.addWidget(b1)
-        row.addWidget(b2)
-        l.addLayout(row)
-        self.loc = self.make_list()
-        l.addWidget(self.loc, 1)
-        return w
-
-    def page_favs(self):
-        w = QWidget()
-        l = QVBoxLayout(w)
-        l.setContentsMargins(8, 8, 8, 0)
-        h = QLabel("Любимые")
-        h.setObjectName("h1")
-        l.addWidget(h)
-        self.favl = self.make_list()
-        l.addWidget(self.favl, 1)
-        return w
-
-    def page_theme(self):
-        sc = QScrollArea()
-        sc.setWidgetResizable(True)
-        w = QWidget()
-        sc.setWidget(w)
-        l = QVBoxLayout(w)
-        l.setContentsMargins(8, 8, 14, 8)
-        l.setSpacing(10)
-        h = QLabel("Оформление")
-        h.setObjectName("h1")
-        l.addWidget(h)
-        self.cur_label = QLabel("")
-        self.cur_label.setObjectName("sub")
-        l.addWidget(self.cur_label)
-
-        h2 = QLabel("Готовые темы")
-        h2.setObjectName("h2")
-        l.addWidget(h2)
-        grid = QGridLayout()
-        grid.setSpacing(10)
-        self.presets = {}
-        for i, (name, t) in enumerate(THEMES.items()):
-            b = QPushButton(name)
-            b.setObjectName("preset")
-            b.setCheckable(True)
-            b.setChecked(name == self.cfg["theme"])
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            fg = "#000" if QColor(t["accent"]).lightness() > 150 else "#fff"
-            b.setStyleSheet(
-                "QPushButton { background: qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 %s,stop:1 %s); color: %s; border-radius: %dpx; font-weight: bold; padding: 14px 10px; }"
-                "QPushButton:checked { border: 2px solid %s; }" % (t["accent"], t["accent2"], fg, int(t["radius"]), t["text"]))
-            b.clicked.connect(lambda _, n=name: self.choose_preset(n))
-            grid.addWidget(b, i // 4, i % 4)
-            self.presets[name] = b
-        l.addLayout(grid)
-
-        h3 = QLabel("Своя настройка")
-        h3.setObjectName("h2")
-        l.addSpacing(8)
-        l.addWidget(h3)
-        cg = QGridLayout()
-        cg.setSpacing(10)
-        self.swatches = {}
-        for i, (key, title) in enumerate(COLOR_KEYS):
-            b = QPushButton(title)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.clicked.connect(lambda _, k=key: self.pick_color(k))
-            cg.addWidget(b, i // 3, i % 3)
-            self.swatches[key] = b
-        l.addLayout(cg)
-
-        t = self.theme()
-        self.s_radius, self.l_radius = self.add_slider(l, "Скругление", 0, 30, int(t["radius"]), self.on_radius)
-        self.s_opacity, self.l_opacity = self.add_slider(l, "Прозрачность окна, %", 40, 100, int(t["opacity"] * 100), self.on_opacity)
-        self.s_font, self.l_font = self.add_slider(l, "Размер шрифта", 9, 18, int(self.cfg["font"]), self.on_font)
-
-        h4 = QLabel("Сеть")
-        h4.setObjectName("h2")
-        l.addSpacing(8)
-        l.addWidget(h4)
-        sub = QLabel("Прокси для YouTube (необязательно), например socks5://127.0.0.1:1080 или http://127.0.0.1:2080")
-        sub.setObjectName("sub")
-        sub.setWordWrap(True)
-        l.addWidget(sub)
-        self.proxy = QLineEdit(self.cfg.get("proxy", ""))
-        self.proxy.setPlaceholderText("пусто — без прокси")
-        self.proxy.editingFinished.connect(self.save_proxy)
-        l.addWidget(self.proxy)
-        l.addStretch(1)
-        self.refresh_swatches()
-        return sc
-
-    def add_slider(self, lay, text, lo, hi, val, cb):
-        row = QHBoxLayout()
-        lab = QLabel(text)
-        lab.setFixedWidth(200)
-        s = ClickSlider(Qt.Orientation.Horizontal)
-        s.setRange(lo, hi)
-        s.setValue(val)
-        v = QLabel(str(val))
-        v.setFixedWidth(36)
-        s.valueChanged.connect(lambda x: (v.setText(str(x)), cb(x)))
-        row.addWidget(lab)
-        row.addWidget(s, 1)
-        row.addWidget(v)
-        lay.addLayout(row)
-        return s, v
-
-    def on_radius(self, x):
-        t = self.theme()
-        t["radius"] = x
-        self.set_custom(t)
-
-    def on_opacity(self, x):
-        t = self.theme()
-        t["opacity"] = x / 100.0
-        self.set_custom(t)
-
-    def on_font(self, x):
-        self.cfg["font"] = x
-        self.schedule_apply()
-        save_json(CFG_FILE, self.cfg)
-
-    def save_proxy(self):
-        self.cfg["proxy"] = self.proxy.text().strip()
-        save_json(CFG_FILE, self.cfg)
-
-    def build_bar(self):
-        bar = QFrame()
-        bar.setObjectName("bar")
-        bar.setFixedHeight(100)
-        bl = QHBoxLayout(bar)
-        bl.setContentsMargins(16, 10, 16, 10)
-        bl.setSpacing(14)
-        self.cover = QLabel()
-        self.cover.setFixedSize(64, 64)
-        bl.addWidget(self.cover)
-        info = QVBoxLayout()
-        info.setSpacing(2)
-        info.addStretch(1)
-        self.title = QLabel("Ничего не играет")
-        self.title.setObjectName("np")
-        self.artist = QLabel("Выбери трек")
-        self.artist.setObjectName("sub")
-        self.title.setFixedWidth(250)
-        self.artist.setFixedWidth(250)
-        info.addWidget(self.title)
-        info.addWidget(self.artist)
-        info.addStretch(1)
-        bl.addLayout(info)
-        bl.addStretch(1)
-
-        mid = QVBoxLayout()
-        mid.setSpacing(4)
-        ctr = QHBoxLayout()
-        ctr.setSpacing(8)
-        ctr.addStretch(1)
-        self.b_shuffle = self.ico("⇄", "Перемешать", True)
-        self.b_shuffle.setChecked(bool(self.cfg["shuffle"]))
-        self.b_shuffle.toggled.connect(self.set_shuffle)
-        b_prev = self.ico("◀◀", "Назад")
-        b_prev.clicked.connect(self.prev_track)
-        self.b_play = QPushButton("▶")
-        self.b_play.setObjectName("play")
-        self.b_play.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.b_play.clicked.connect(self.toggle)
-        b_next = self.ico("▶▶", "Дальше")
-        b_next.clicked.connect(self.skip)
-        self.b_repeat = self.ico("↻", "Повтор списка", True)
-        self.b_repeat.setChecked(bool(self.cfg["repeat"]))
-        self.b_repeat.toggled.connect(self.set_repeat)
-        self.b_auto = self.ico("∞", "Автоподбор: когда список закончится, включить похожие", True)
-        self.b_auto.setChecked(bool(self.cfg["autoplay"]))
-        self.b_auto.toggled.connect(self.set_autoplay)
-        for b in (self.b_shuffle, b_prev, self.b_play, b_next, self.b_repeat, self.b_auto):
-            ctr.addWidget(b)
-        ctr.addStretch(1)
-        mid.addLayout(ctr)
-        sr = QHBoxLayout()
-        self.t_cur = QLabel("0:00")
-        self.t_cur.setObjectName("sub")
-        self.t_all = QLabel("--:--")
-        self.t_all.setObjectName("sub")
-        self.seek = ClickSlider(Qt.Orientation.Horizontal)
-        self.seek.setRange(0, 1000)
-        self.seek.sliderPressed.connect(lambda: setattr(self, "seeking", True))
-        self.seek.sliderReleased.connect(self.do_seek)
-        sr.addWidget(self.t_cur)
-        sr.addWidget(self.seek, 1)
-        sr.addWidget(self.t_all)
-        mid.addLayout(sr)
-        bl.addLayout(mid, 3)
-        bl.addStretch(1)
-
-        self.b_heart = self.ico("♡", "В избранное", True)
-        self.b_heart.clicked.connect(self.heart)
-        bl.addWidget(self.b_heart)
-        vl = QLabel("Громк.")
-        vl.setObjectName("sub")
-        self.vol = ClickSlider(Qt.Orientation.Horizontal)
-        self.vol.setRange(0, 100)
-        self.vol.setValue(int(self.cfg.get("volume", 70)))
-        self.vol.setFixedWidth(110)
-        self.vol.valueChanged.connect(self.set_volume)
-        bl.addWidget(vl)
-        bl.addWidget(self.vol)
-        return bar
-
-    def ico(self, text, tip, checkable=False):
-        b = QPushButton(text)
-        b.setObjectName("ico")
-        b.setToolTip(tip)
-        b.setCheckable(checkable)
-        b.setCursor(Qt.CursorShape.PointingHandCursor)
-        return b
-
-    def goto(self, i):
-        self.stack.setCurrentIndex(i)
-        for k, b in enumerate(self.nav):
-            b.setChecked(k == i)
-        if i == 1 and not self.recs and not self.recs_started:
-            self.recs_started = True
-            self.do_recs()
-        if i == 4:
-            self.sync_controls()
-
-    # ---------- списки ----------
-    def fill(self, lst, tracks):
-        gen = (lst.property("gen") or 0) + 1
-        lst.setProperty("gen", gen)
-        lst.clear()
-        r = max(int(self.theme()["radius"]) - 4, 4)
-        for tr in tracks:
-            it = QListWidgetItem("%s\n%s  •  %s" % (tr["title"], tr["artist"], fmt(tr.get("duration"))))
-            it.setData(UR, tr)
-            it.setIcon(QIcon(self.ph))
-            it.setSizeHint(QSize(0, 70))
-            lst.addItem(it)
-            if tr.get("thumb"):
-                self.get_thumb(tr["thumb"], lambda pm, it=it, r=r: it.setIcon(QIcon(rounded(pm, 56, r))), lst, gen)
-
-    def get_thumb(self, url, setter, lst=None, gen=None):
-        def ok():
-            return lst is None or lst.property("gen") == gen
-        if url in self.pix:
-            setter(self.pix[url])
-            return
-        req = QNetworkRequest(QUrl(url))
-        req.setAttribute(QNetworkRequest.Attribute.RedirectPolicyAttribute, QNetworkRequest.RedirectPolicy.NoLessSafeRedirectPolicy)
-        rep = self.nam.get(req)
-
-        def done():
-            try:
-                if rep.error() == QNetworkReply.NetworkError.NoError:
-                    pm = QPixmap()
-                    if pm.loadFromData(rep.readAll()):
-                        self.pix[url] = pm
-                        if ok():
-                            setter(pm)
-            finally:
-                rep.deleteLater()
-        rep.finished.connect(done)
-
-    def activate(self, lst, item):
-        self.queue = [lst.item(i).data(UR) for i in range(lst.count())]
-        self.play_index(lst.row(item))
-
-    def list_menu(self, lst, pos):
-        it = lst.itemAt(pos)
-        if not it:
-            return
-        tr = it.data(UR)
-        m = QMenu(self)
-        a_play = m.addAction("Играть")
-        a_fav = m.addAction("Убрать из любимых" if self.is_fav(tr["id"]) else "В любимые")
-        a_sim = m.addAction("Похожие треки") if tr["src"] == "yt" else None
-        act = m.exec(lst.viewport().mapToGlobal(pos))
-        if act == a_play:
-            self.activate(lst, it)
-        elif act == a_fav:
-            self.toggle_fav(tr)
-        elif a_sim is not None and act == a_sim:
-            self.find_similar(tr)
-
-    # ---------- поиск / библиотека ----------
-    def do_search(self):
-        q = self.q.text().strip()
-        if not q:
-            return
-        self.search_status.setText("Ищу «%s»…" % q)
-        proxy = self.cfg.get("proxy", "")
-
-        def work():
-            try:
-                out = ytdlp(["--flat-playlist", "-J", "ytsearch25:" + q], proxy)
-                data = json.loads(out)
-                tracks = [entry_to_track(e) for e in (data.get("entries", []) or []) if e and e.get("id")]
-                self.bus.found.emit(tracks)
-            except Exception as ex:
-                self.bus.failed.emit(str(ex)[:300])
-        threading.Thread(target=work, daemon=True).start()
-
-    def on_found(self, tracks):
-        self.search_status.setText("Найдено: %d" % len(tracks) if tracks else "Ничего не найдено")
-        self.fill(self.res, tracks)
-
-    def on_failed(self, msg):
-        self.search_status.setText("Ошибка: " + msg)
-        self.set_info(self.cur_title(), "Ошибка: " + msg)
-        self.b_play.setText("▶")
-
-    def music_dir(self):
-        d = self.cfg.get("music_dir") or str(Path.home() / "Music")
-        return Path(d)
-
-    def pick_dir(self):
-        d = QFileDialog.getExistingDirectory(self, "Папка с музыкой", str(self.music_dir()))
-        if d:
-            self.cfg["music_dir"] = d
-            save_json(CFG_FILE, self.cfg)
-            self.load_local()
-
-    def load_local(self):
-        base = self.music_dir()
-        self.loc_label.setText(str(base))
-        tracks = []
-        if base.is_dir():
-            for p in sorted(base.rglob("*")):
-                if p.suffix.lower() in AUDIO_EXT and p.is_file():
-                    tracks.append({"id": str(p), "title": p.stem, "artist": p.parent.name, "duration": 0,
-                                   "src": "local", "url": str(p), "thumb": ""})
-                    if len(tracks) >= 5000:
-                        break
-        self.fill(self.loc, tracks)
-
-    # ---------- история и рекомендации ----------
-    def save_hist(self):
-        if len(self.hist) > 600:
-            keep = sorted(self.hist.items(), key=lambda kv: kv[1].get("last", 0), reverse=True)[:500]
-            self.hist = dict(keep)
-        save_json(HIST_FILE, self.hist)
-
-    def note_start(self, tr):
-        if tr["src"] != "yt":
-            self.counted = True
-            return
-        self.counted = False
-        h = self.hist.setdefault(tr["id"], {"track": tr, "plays": 0, "skips": 0, "last": 0})
-        h["track"] = tr
-
-    def count_play(self):
-        self.counted = True
-        if 0 <= self.idx < len(self.queue):
-            h = self.hist.get(self.queue[self.idx]["id"])
-            if h is not None:
-                h["plays"] = h.get("plays", 0) + 1
-                h["last"] = time.time()
-                self.save_hist()
-
-    def mark_skip(self):
-        if self.counted or not (0 <= self.idx < len(self.queue)) or self.mp.get_time() < 1000:
-            return
-        h = self.hist.get(self.queue[self.idx]["id"])
-        if h is not None:
-            h["skips"] = h.get("skips", 0) + 1
-            h["last"] = time.time()
-            self.counted = True
-            self.save_hist()
-
-    def pick_seeds(self):
-        cand = {}
-        for f in self.favs:
-            if f.get("src") == "yt":
-                cand[f["id"]] = [f, 3.0]
-        now = time.time()
-        for tid, h in self.hist.items():
-            tr = h.get("track") or {}
-            if tr.get("src") != "yt" or h.get("plays", 0) < 1 or h.get("skips", 0) > h.get("plays", 0):
-                continue
-            w = min(h["plays"], 5) * 0.6 + (1.0 if now - h.get("last", 0) < 7 * 86400 else 0.0)
-            if tid in cand:
-                cand[tid][1] += w
-            else:
-                cand[tid] = [tr, w]
-        pool = list(cand.values())
-        chosen = []
-        for _ in range(min(4, len(pool))):
-            r = random.uniform(0, sum(x[1] for x in pool))
-            acc, pick = 0.0, pool[-1]
-            for x in pool:
-                acc += x[1]
-                if acc >= r:
-                    pick = x
-                    break
-            chosen.append((pick[0], pick[1]))
-            pool.remove(pick)
-        return chosen
-
-    def do_recs(self):
-        seeds = self.pick_seeds()
-        if not seeds:
-            self.rec_status.setText("Пока не из чего подбирать: послушай несколько треков с YouTube (дольше 30 секунд) или добавь в «Любимые» — и тут появится подборка.")
-            return
-        self.rec_status.setText("Подбираю по твоим трекам…")
-        exclude = {f["id"] for f in self.favs} | set(self.hist.keys())
-        proxy = self.cfg.get("proxy", "")
-
-        def work():
-            try:
-                self.bus.recs.emit(compute_recs(seeds, exclude, proxy))
-            except Exception as ex:
-                self.bus.recfail.emit(str(ex)[:300])
-        threading.Thread(target=work, daemon=True).start()
-
-    def on_recs(self, tracks):
-        self.recs = tracks
-        save_json(RECS_FILE, tracks)
-        self.rec_status.setText("Подборка готова: %d треков" % len(tracks) if tracks else "Ничего подходящего не нашлось, послушай ещё что-нибудь")
-        self.fill(self.recl, tracks)
-
-    def on_recfail(self, msg):
-        self.rec_status.setText("Ошибка: " + msg)
-
-    def find_similar(self, tr):
-        self.goto(0)
-        self.search_status.setText("Ищу похожее на «%s»…" % tr["title"])
-        proxy = self.cfg.get("proxy", "")
-
-        def work():
-            try:
-                self.bus.similar.emit([t for t in mix_tracks(tr["id"], proxy) if t["id"] != tr["id"]])
-            except Exception as ex:
-                self.bus.failed.emit(str(ex)[:300])
-        threading.Thread(target=work, daemon=True).start()
-
-    def on_similar(self, tracks):
-        self.search_status.setText("Похожее: %d" % len(tracks) if tracks else "Похожего не нашлось")
-        self.fill(self.res, tracks)
-
-    def fetch_radio(self):
-        tr = self.queue[self.idx]
-        tok = self.token
-        self.set_info(tr["title"], "Подбираю похожее…")
-        qids = {t["id"] for t in self.queue}
-        bad = {k for k, h in self.hist.items() if h.get("skips", 0) > h.get("plays", 0)}
-        proxy = self.cfg.get("proxy", "")
-
-        def work():
-            try:
-                lst = [t for t in mix_tracks(tr["id"], proxy)
-                       if t["id"] not in qids and t["id"] not in bad and 45 <= (t.get("duration") or 60) <= 720]
-                self.bus.radio.emit(tok, lst[:20])
-            except Exception as ex:
-                self.bus.failed.emit(str(ex)[:300])
-        threading.Thread(target=work, daemon=True).start()
-
-    def on_radio(self, tok, lst):
-        if tok != self.token:
-            return
-        if not lst:
-            self.b_play.setText("▶")
-            self.set_info(self.cur_title(), "Больше ничего не нашлось")
-            return
-        old = len(self.queue)
-        self.queue.extend(lst)
-        self.play_index(old)
-
-    # ---------- избранное ----------
-    def is_fav(self, tid):
-        return any(f["id"] == tid for f in self.favs)
-
-    def toggle_fav(self, tr):
-        if self.is_fav(tr["id"]):
-            self.favs = [f for f in self.favs if f["id"] != tr["id"]]
-        else:
-            self.favs.append(tr)
-        save_json(FAV_FILE, self.favs)
-        self.refresh_favs()
-        self.update_heart()
-
-    def refresh_favs(self):
-        self.fill(self.favl, self.favs)
-
-    def heart(self):
-        if 0 <= self.idx < len(self.queue):
-            self.toggle_fav(self.queue[self.idx])
-        else:
-            self.b_heart.setChecked(False)
-
-    def update_heart(self):
-        on = 0 <= self.idx < len(self.queue) and self.is_fav(self.queue[self.idx]["id"])
-        self.b_heart.setChecked(bool(on))
-        self.b_heart.setText("♥" if on else "♡")
-
-    # ---------- воспроизведение ----------
-    def cur_title(self):
-        return self.queue[self.idx]["title"] if 0 <= self.idx < len(self.queue) else "Ничего не играет"
-
-    def set_info(self, title, sub):
-        for lab, text in ((self.title, title), (self.artist, sub)):
-            lab.setText(QFontMetrics(lab.font()).elidedText(text, Qt.TextElideMode.ElideRight, lab.width()))
-            lab.setToolTip(text)
-
-    def set_cover(self, tr):
-        r = max(int(self.theme()["radius"]) - 2, 4)
-        self.cover.setPixmap(placeholder(64, r, self.theme()["accent"]))
-        if tr.get("thumb"):
-            idx = self.token
-            self.get_thumb(tr["thumb"], lambda pm: self.cover.setPixmap(rounded(pm, 64, r)) if idx == self.token else None)
-
-    def play_index(self, i):
-        if not self.queue:
-            return
-        self.mark_skip()
-        self.idx = i % len(self.queue)
-        tr = self.queue[self.idx]
-        self.note_start(tr)
-        self.token += 1
-        tok = self.token
-        self.mp.stop()
-        self.advanced = False
-        self.set_info(tr["title"], "Загрузка…" if tr["src"] == "yt" else tr["artist"])
-        self.set_cover(tr)
-        self.update_heart()
-        self.seek.setValue(0)
-        self.t_cur.setText("0:00")
-        self.t_all.setText(fmt(tr.get("duration")))
-        if tr["src"] == "local":
-            self.start(self.vlc.media_new_path(tr["url"]))
-            return
-        proxy = self.cfg.get("proxy", "")
-
-        def work():
-            try:
-                out = ytdlp(["-f", "bestaudio/best", "-g", "--no-playlist", tr["url"]], proxy)
-                lines = [x for x in out.strip().splitlines() if x.startswith("http")]
-                if not lines:
-                    raise RuntimeError("не удалось получить ссылку на аудио")
-                self.bus.resolved.emit(tok, lines[0])
-            except Exception as ex:
-                self.bus.failed.emit(str(ex)[:300])
-        threading.Thread(target=work, daemon=True).start()
-
-    def on_resolved(self, tok, url):
-        if tok != self.token:
-            return
-        self.start(self.vlc.media_new(url))
-        tr = self.queue[self.idx]
-        self.set_info(tr["title"], tr["artist"])
-
-    def start(self, media):
-        self.mp.set_media(media)
-        self.mp.play()
-        self.b_play.setText("❚❚")
-
-    def toggle(self):
-        st = self.mp.get_state()
-        if st in (vlc.State.Ended, vlc.State.Stopped, vlc.State.NothingSpecial):
-            if self.queue:
-                self.play_index(max(self.idx, 0))
-            return
-        self.mp.pause()
-
-    def next_track(self):
-        if not self.queue:
-            return
-        if self.cfg["shuffle"] and len(self.queue) > 1:
-            n = self.idx
-            while n == self.idx:
-                n = random.randrange(len(self.queue))
-            self.play_index(n)
-        elif self.idx + 1 < len(self.queue) or self.cfg["repeat"]:
-            self.play_index(self.idx + 1)
-        elif self.cfg.get("autoplay", True) and self.queue[self.idx]["src"] == "yt":
-            self.fetch_radio()
-        else:
-            self.mp.stop()
-            self.b_play.setText("▶")
-
-    def skip(self):
-        self.mark_skip()
-        self.next_track()
-
-    def prev_track(self):
-        if not self.queue:
-            return
-        if self.mp.get_time() > 4000:
-            self.mp.set_time(0)
-        else:
-            self.play_index(self.idx - 1)
-
-    def set_autoplay(self, on):
-        self.cfg["autoplay"] = bool(on)
-        save_json(CFG_FILE, self.cfg)
-
-    def set_shuffle(self, on):
-        self.cfg["shuffle"] = bool(on)
-        save_json(CFG_FILE, self.cfg)
-
-    def set_repeat(self, on):
-        self.cfg["repeat"] = bool(on)
-        save_json(CFG_FILE, self.cfg)
-
-    def set_volume(self, v):
-        self.mp.audio_set_volume(int(v))
-        self.cfg["volume"] = int(v)
-
-    def do_seek(self):
-        self.seeking = False
-        if self.mp.get_length() > 0:
-            self.mp.set_position(self.seek.value() / 1000.0)
-
-    def tick(self):
-        st = self.mp.get_state()
-        if st == vlc.State.Ended and not self.advanced and self.queue:
-            self.advanced = True
-            if not self.counted:
-                self.count_play()
-            self.next_track()
-            return
-        if st == vlc.State.Error and not self.advanced:
-            self.advanced = True
-            self.set_info(self.cur_title(), "Ошибка воспроизведения")
-            self.b_play.setText("▶")
-            return
-        self.b_play.setText("❚❚" if self.mp.is_playing() else "▶")
-        length, pos = self.mp.get_length(), self.mp.get_time()
-        if pos > 30000 and not self.counted:
-            self.count_play()
-        if length > 0 and pos >= 0:
-            if not self.seeking:
-                self.seek.setValue(int(pos * 1000 / length))
-            self.t_cur.setText(fmt(pos // 1000) if pos >= 1000 else "0:00")
-            self.t_all.setText(fmt(length // 1000))
-
-    def closeEvent(self, e):
-        save_json(CFG_FILE, self.cfg)
-        try:
-            self.mp.stop()
-        except Exception:
-            pass
-        super().closeEvent(e)
-
-
-def main():
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    app.setApplicationName("musicplayer")
-    app.setDesktopFileName("musicplayer")
-    w = Player()
-    w.resize(1120, 720)
-    w.show()
-    sys.exit(app.exec())
-
-
-if __name__ == "__main__":
-    main()
-MPLAYER_EOF
-chmod 755 /usr/local/bin/musicplayer
 w() {
 mkdir -p "$(dirname "$1")"
 if [ -f "$1" ]; then cp -f "$1" "$1.bak"; fi
 cat > "$1"
 }
-w "$H/.config/hypr/quick-kill.sh" <<'EOF'
-#!/bin/sh
-# Super+Shift+Q: ~1.5 сек закрывает окно под курсором (фокус следует за мышью)
-i=0
-while [ "$i" -lt 4 ]; do
-  hyprctl dispatch killactive >/dev/null 2>&1
-  i=$((i+1))
-  sleep 0.4
-done
-EOF
-chmod 755 "$H/.config/hypr/quick-kill.sh"
+rm -f "$H/.config/hypr/quick-kill.sh"
 w "$H/.config/hypr/hyprland.conf" <<'EOF'
 monitor = , preferred, auto, 1
 $mod = SUPER
@@ -2057,14 +933,17 @@ exec-once = waybar
 exec-once = lxqt-policykit-agent
 input {
 kb_layout = us,ru
+follow_mouse = 1
+repeat_rate = 40
+repeat_delay = 250
 kb_options = grp:alt_shift_toggle
 touchpad {
 natural_scroll = true
 }
 }
 general {
-gaps_in = 8
-gaps_out = 12
+gaps_in = 6
+gaps_out = 10
 border_size = 2
 col.active_border = rgba(ffffffee)
 col.inactive_border = rgba(ffffff55)
@@ -2088,6 +967,7 @@ animation = fade, 1, 5, ease
 animation = workspaces, 1, 5, ease, slide
 }
 misc {
+focus_on_close = 1
 disable_hyprland_logo = true
 disable_splash_rendering = true
 }
@@ -2095,10 +975,10 @@ bind = $mod, Return, exec, kitty sh ~/.config/fastfetch/show.sh
 bind = $mod, D, exec, launcher.sh
 bind = $mod, B, exec, firefox-esr
 bind = $mod, E, exec, files
-bind = $mod, M, exec, musicplayer
+bind = $mod, M, exec, limusic
 bind = $mod, W, exec, sh ~/.config/hypr/wallpaper.sh next
 bind = $mod, Q, killactive
-bind = $mod SHIFT, Q, exec, sh ~/.config/hypr/quick-kill.sh
+binde = $mod SHIFT, Q, killactive
 bind = $mod SHIFT, Escape, exec, power-menu
 bind = $mod, F, fullscreen
 bind = $mod, V, togglefloating
@@ -2152,14 +1032,15 @@ confirm_os_window_close 0
 EOF
 w "$H/.config/waybar/config.jsonc" <<'EOF'
 {
-"layer": "top", "height": 36, "margin-top": 10, "margin-left": 15, "margin-right": 15,
-"modules-left": ["custom/launcher", "custom/files", "clock", "network", "temperature", "cpu", "memory"],
-"modules-center": ["hyprland/workspaces"],
-"modules-right": ["hyprland/language", "pulseaudio", "battery", "backlight", "pulseaudio#mic", "custom/power"],
+"layer": "top", "height": 24, "margin-top": 5, "margin-left": 8, "margin-right": 8,
+"modules-left": ["hyprland/workspaces", "hyprland/window"],
+"modules-center": ["custom/launcher", "custom/files", "hyprland/language", "clock", "cpu", "memory", "temperature"],
+"modules-right": ["network", "pulseaudio", "pulseaudio#mic", "backlight", "battery", "custom/power"],
 "custom/launcher": { "format": "", "tooltip": false, "on-click": "launcher.sh" },
 "custom/files": { "format": "", "tooltip": false, "on-click": "files" },
 "custom/power": { "format": "", "tooltip": false, "on-click": "power-menu" },
 "hyprland/workspaces": { "format": "{id}", "persistent-workspaces": { "*": 5 } },
+"hyprland/window": { "format": "{title}", "max-length": 30, "separate-outputs": true },
 "hyprland/language": { "format": "{short}" },
 "clock": { "format": "{:%H:%M  |  %d %b}", "tooltip-format": "{:%d %B %Y}" },
 "network": {
@@ -2189,23 +1070,25 @@ w "$H/.config/waybar/config.jsonc" <<'EOF'
 }
 EOF
 w "$H/.config/waybar/style.css" <<'EOF'
-* { font-family: "DejaVu Sans Mono", "FontAwesome"; font-size: 11px; border: none; min-height: 0; }
+* { font-family: "DejaVu Sans Mono", "FontAwesome"; font-size: 10px; border: none; min-height: 0; }
 window#waybar { background: transparent; color: #d4d4d4; }
-#workspaces, #clock, #network, #temperature, #cpu, #memory, #language,
+#workspaces, #window, #clock, #network, #temperature, #cpu, #memory, #language,
 #pulseaudio, #backlight, #battery,
 #custom-launcher, #custom-files, #custom-power {
 background: rgba(10,10,12,0.72);
-border: 2px solid rgba(255,255,255,0.55);
-border-radius: 20px;
-padding: 0 16px;
-margin: 0 4px;
+border: 1px solid rgba(255,255,255,0.5);
+border-radius: 12px;
+padding: 0 9px;
+margin: 0 2px;
 }
-#custom-launcher, #custom-files, #custom-power { min-width: 32px; padding: 0; }
+#custom-launcher, #custom-files, #custom-power { min-width: 22px; padding: 0; }
 #custom-launcher, #custom-files { color: #d8d3bd; }
 #custom-power { color: #ff6b6b; border-color: rgba(255,107,107,0.55); }
 #backlight { color: #a5bdff; }
-#workspaces { padding: 0 6px; }
-#workspaces button { color: #d4d4d4; background: transparent; padding: 0 11px; margin: 4px 0; border-radius: 14px; }
+#window { color: #b4b4b4; }
+window#waybar.empty #window { background: transparent; border-color: transparent; }
+#workspaces { padding: 0 3px; }
+#workspaces button { color: #d4d4d4; background: transparent; padding: 0 7px; margin: 2px 0; border-radius: 9px; }
 #workspaces button.active { color: #101010; background: #b4b4b4; }
 #battery.warning { color: #ffcc66; }
 #battery.critical { color: #ff6b6b; }
@@ -2266,16 +1149,6 @@ Terminal=false
 Categories=System;FileManager;
 MimeType=inode/directory;
 StartupWMClass=files
-EOF
-w "$H/.local/share/applications/musicplayer.desktop" <<'EOF'
-[Desktop Entry]
-Type=Application
-Name=Music Player
-Exec=musicplayer
-Icon=audio-x-generic
-Terminal=false
-Categories=Audio;Music;Player;
-StartupWMClass=musicplayer
 EOF
 w "$H/.config/gtk-3.0/settings.ini" <<'EOF'
 [Settings]
@@ -2380,17 +1253,25 @@ apt-get install -y --no-install-recommends "/tmp/$name.deb" \
 || echo "!! $name не установился (скрипт продолжает работу)"
 rm -f "/tmp/$name.deb"
 }
+install_limusic() {
+local json url
+json="$(curl -fsSL https://api.github.com/repos/SimoHypers/limusic/releases/latest 2>/dev/null || true)"
+url="$(printf '%s' "$json" | grep -o 'https://[^"]*\.deb' | grep -iE 'amd64|x86_64' | head -n1 || true)"
+if [ -n "$url" ] && curl -fL --retry 3 -o /tmp/limusic.deb "$url" && apt-get install -y --no-install-recommends /tmp/limusic.deb; then
+echo "ok: Limusic установлен (Super+M)"
+else
+echo "!! Limusic не поставился (нет доступа к GitHub?). Включи VPN и запусти скрипт ещё раз,"
+echo "   либо скачай .deb вручную: https://github.com/SimoHypers/limusic/releases/latest  и  sudo apt install ./файл.deb"
+fi
+rm -f /tmp/limusic.deb
+}
 install_extras() {
-apt-get install -y --no-install-recommends nodejs libgl1-mesa-dri openjdk-21-jre \
-|| echo "!! nodejs/Java не поставились (нужны для YouTube в плеере и для Minecraft)"
+apt-get install -y --no-install-recommends libgl1-mesa-dri openjdk-21-jre \
+|| echo "!! Java не поставилась (нужна для Minecraft)"
 apt-get install -y --no-install-recommends openjdk-17-jre >/dev/null 2>&1 \
 || echo "-- openjdk-17 нет в репозитории (нужен только для старых версий Minecraft)"
-if curl -fL --retry 3 -o /usr/local/bin/yt-dlp.new https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp; then
-chmod 755 /usr/local/bin/yt-dlp.new && mv -f /usr/local/bin/yt-dlp.new /usr/local/bin/yt-dlp
-else
-rm -f /usr/local/bin/yt-dlp.new
-echo "!! свежий yt-dlp не скачался (GitHub недоступен? включи VPN), остаётся версия из apt"
-fi
+rm -f /usr/local/bin/musicplayer; rm -rf "$H/.local/share/musicplayer" "$H/.local/share/applications/musicplayer.desktop"
+install_limusic
 local P=/opt/prismlauncher
 if [ ! -x "$P/squashfs-root/AppRun" ]; then
 mkdir -p "$P"; rm -rf "$P/squashfs-root"
@@ -2435,7 +1316,14 @@ install_extras
 else
 echo "!! curl не установился - дополнительные приложения пропущены"
 fi
+echo "=== Чистка мусора ==="
+apt-get autoremove -y --purge || true
+rc="$(dpkg -l | awk '/^rc/ {print $2}')"
+[ -z "$rc" ] || apt-get purge -y $rc || true
 apt-get clean
+journalctl --vacuum-size=50M >/dev/null 2>&1 || true
+rm -f /tmp/*.deb /tmp/power-menu.pid
+rm -rf "$H/.cache/thumbnails"
 echo
 echo "Готово. ПЕРЕЗАГРУЗИСЬ (reboot)."
 echo "После входа на TTY1 Hyprland запустится сам."
@@ -2443,8 +1331,8 @@ echo "NVIDIA: драйверы удалены и не устанавливают
 echo "Steam: запусти из лаунчера (Super+D) уже после входа в Hyprland."
 echo
 echo "Горячие клавиши:"
-echo "  Super+M           - Music Player"
+echo "  Super+M           - Limusic (YouTube Music)"
 echo "  Super+W           - следующие обои (картинки в ~/Pictures/wall)"
 echo "  Super+Shift+Esc   - меню питания (повторное нажатие закрывает)"
 echo "  Super+Q           - закрыть активное окно"
-echo "  Super+Shift+Q     - зажать и водить курсором (закрывает окна под курсором)"
+echo "  Super+Shift+Q     - зажми и води курсором: окна под ним закрываются подряд"
