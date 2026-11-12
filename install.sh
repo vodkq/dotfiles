@@ -1,151 +1,59 @@
-#!/usr/bin/env bash
-set -Eeuo pipefail
-
-# Arch Linux installer for a lean Hyprland desktop.
-# Run from an installed Arch Linux system as root: bash install.sh USERNAME
-# Optional: INSTALL_STEAM=0 and/or INSTALL_EXTRAS=1.
-
-log() { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
-die() { printf '\033[1;31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
-trap 'rc=$?; echo "Ошибка на строке ${LINENO} (код $rc). Ничего автоматически не удалялось." >&2; exit "$rc"' ERR
-
-[[ $EUID -eq 0 ]] || die "Запусти от root: su -c 'bash install.sh USERNAME'"
-command -v pacman >/dev/null 2>&1 || die "Не найден pacman"
-command -v flock >/dev/null 2>&1 || die "Не найден flock (util-linux)"
-install -d -m 0755 /run/lock
-exec 9>/run/lock/hyprland-install.lock
-flock -n 9 || die "Другой экземпляр установщика уже выполняется"
-[[ -r /etc/os-release ]] || die "Не найден /etc/os-release"
-. /etc/os-release
-[[ ${ID:-} == arch ]] || die "Этот установщик предназначен для Arch Linux, обнаружено: ${ID:-unknown}"
-[[ $(uname -m) == x86_64 ]] || die "Поддерживается только x86_64"
-
+#!/bin/bash
+set -euo pipefail
+[ "$(id -u)" -eq 0 ] || { echo "Запусти от root: su -"; exit 1; }
+[ -f /etc/arch-release ] || { echo "Нужен Arch Linux"; exit 1; }
 U="${1:-$(getent passwd 1000 | cut -d: -f1 || true)}"
-[[ -n "$U" ]] || die "Не найден обычный пользователь. Укажи имя: bash install.sh USERNAME"
-getent passwd "$U" >/dev/null || die "Пользователь $U не существует"
-[[ "$U" != root ]] || die "Нельзя устанавливать окружение для root"
-IFS=: read -r _ _ _ _ _ H _ < <(getent passwd "$U")
-[[ -d "$H" ]] || die "Домашняя папка не существует: $H"
-UG="$(id -gn "$U")"
-[[ -n "$UG" ]] || die "Не удалось определить основную группу пользователя $U"
-
-# Steam is included by default; set INSTALL_STEAM=0 to skip it.
-INSTALL_STEAM="${INSTALL_STEAM:-1}"
-INSTALL_EXTRAS="${INSTALL_EXTRAS:-0}"
-[[ "$INSTALL_STEAM" == 0 || "$INSTALL_STEAM" == 1 ]] || die "INSTALL_STEAM должен быть 0 или 1"
-[[ "$INSTALL_EXTRAS" == 0 || "$INSTALL_EXTRAS" == 1 ]] || die "INSTALL_EXTRAS должен быть 0 или 1"
-
-# Enable multilib only when Steam is requested, preserving the original config.
-if [[ "$INSTALL_STEAM" == 1 ]] && ! grep -Eq '^\[multilib\]' /etc/pacman.conf; then
-  grep -q '^#\[multilib\]' /etc/pacman.conf || die "В /etc/pacman.conf не найден раздел multilib"
-  log "Включаю официальный репозиторий multilib для Steam"
-  [[ -e /etc/pacman.conf.bak ]] || cp -a /etc/pacman.conf /etc/pacman.conf.bak
-  sed -i '/^#\[multilib\]/,/^#Include = \/etc\/pacman.d\/mirrorlist/ s/^#//' /etc/pacman.conf
-  grep -Eq '^\[multilib\]' /etc/pacman.conf || die "Не удалось включить multilib; проверь /etc/pacman.conf"
+[ -n "$U" ] || { echo "Не нашёл пользователя. Запусти: bash install.sh ИМЯ"; exit 1; }
+id "$U" >/dev/null 2>&1 || { echo "Пользователь $U не существует"; exit 1; }
+H="/home/$U"
+# multilib нужен для Steam (32-бит библиотеки)
+if ! grep -q '^\[multilib\]' /etc/pacman.conf; then
+sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf
+grep -q '^\[multilib\]' /etc/pacman.conf \
+|| printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
 fi
-
-log "Полное обновление системы и установка минимального набора из официальных репозиториев"
-pacman -Syu --needed --noconfirm \
-  sudo hyprland xdg-desktop-portal xdg-desktop-portal-hyprland \
-  kitty waybar wofi swaybg \
-  pipewire pipewire-pulse wireplumber \
-  brightnessctl grim slurp wl-clipboard \
-  ttf-dejavu otf-font-awesome polkit hyprpolkitagent \
-  fastfetch python python-gobject gtk3 \
-  mesa xdg-utils xorg-xwayland dbus adwaita-icon-theme udisks2 \
-  firefox telegram-desktop nano curl xdg-desktop-portal-gtk
-
-# Add the user to wheel/video and configure sudo without overwriting local policy.
-usermod -aG wheel,video "$U"
-install -d -m 0750 /etc/sudoers.d
-SUDOERS_DROPIN=/etc/sudoers.d/90-hyprland-wheel
-if [[ -e "$SUDOERS_DROPIN" ]]; then
-  grep -Fxq '%wheel ALL=(ALL:ALL) ALL' "$SUDOERS_DROPIN" || die "$SUDOERS_DROPIN уже существует и отличается; не перезаписываю его"
-else
-  SUDOERS_TMP="$(mktemp /etc/sudoers.d/.hyprland-wheel.XXXXXX)"
-  printf '%%wheel ALL=(ALL:ALL) ALL\n' > "$SUDOERS_TMP"
-  chmod 0440 "$SUDOERS_TMP"
-  if ! visudo -cf "$SUDOERS_TMP" >/dev/null; then
-    rm -f "$SUDOERS_TMP"
-    die "Некорректная настройка sudoers"
-  fi
-  mv "$SUDOERS_TMP" "$SUDOERS_DROPIN"
-fi
-visudo -c >/dev/null || die "Общая конфигурация sudoers некорректна"
-
-# Detect GPUs only for the optional Steam path; pciutils is not part of the lean base.
-if [[ "$INSTALL_STEAM" == 1 ]]; then
-  pacman -S --needed --noconfirm pciutils
-fi
-# Detect every GPU and install only matching official Vulkan stacks. Never purge/replace NVIDIA.
-GPU="$(lspci -nn 2>/dev/null | grep -Ei 'VGA compatible controller|3D controller|Display controller' || true)"
-STEAM_VULKAN32=()
-if grep -Eqi 'AMD/ATI|Advanced Micro Devices' <<<"$GPU"; then
-  pacman -S --needed --noconfirm vulkan-radeon
-  STEAM_VULKAN32+=(lib32-vulkan-radeon)
-fi
-if grep -Eqi 'Intel Corporation' <<<"$GPU"; then
-  pacman -S --needed --noconfirm vulkan-intel
-  STEAM_VULKAN32+=(lib32-vulkan-intel)
-fi
-if grep -Eqi 'NVIDIA' <<<"$GPU"; then
-  if pacman -Q nvidia-utils >/dev/null 2>&1; then
-    STEAM_VULKAN32+=(lib32-nvidia-utils)
-    echo "NVIDIA-драйвер уже установлен; не меняю его."
-  else
-    echo "Обнаружена NVIDIA, но nvidia-utils не установлен. Не буду выбирать драйвер автоматически."
-  fi
-fi
-
-# Steam is a large optional install; keep the base system lean by default.
-if [[ "$INSTALL_STEAM" == 1 ]]; then
-  log "Установка Steam и базовых 32-битных графических библиотек"
-  pacman -S --needed --noconfirm steam lib32-mesa "${STEAM_VULKAN32[@]}"
-fi
-
-cat > /usr/local/bin/arch-install <<'EOF'
-#!/bin/sh
-set -eu
-[ "$#" -eq 1 ] || { echo "Использование: arch-install FILE.pkg.tar.zst"; exit 1; }
-f="$(readlink -f -- "$1")"
-[ -f "$f" ] || { echo "Файл пакета не найден: $1"; exit 1; }
-case "$f" in
-  *.pkg.tar.zst|*.pkg.tar.xz|*.pkg.tar.gz|*.pkg.tar)
-    ;;
-  *) echo "Поддерживаются только пакеты Arch: .pkg.tar.zst/.xz/.gz"; exit 2 ;;
-esac
-exec kitty --title "Установка пакета Arch Linux" sh -c '
-echo "Устанавливаю: $1"; echo
-sudo pacman -U -- "$1"
-rc=$?
+# Arch - rolling: ставить пакеты без полного обновления нельзя, поэтому сразу -Syu
+pacman -Syu --noconfirm --needed sudo
+nv="$(pacman -Qq 2>/dev/null | grep -E '^(nvidia|lib32-nvidia|opencl-nvidia|lib32-opencl-nvidia)' || true)"
+[ -z "$nv" ] || pacman -Rns --noconfirm $nv || true
+pacman -S --noconfirm --needed \
+hyprland hyprland-guiutils xdg-desktop-portal-hyprland \
+kitty waybar wofi swaybg \
+pipewire pipewire-pulse wireplumber \
+brightnessctl grim slurp wl-clipboard \
+ttf-dejavu ttf-font-awesome polkit lxqt-policykit \
+fastfetch cava python-gobject gtk3 mesa vulkan-intel \
+xdg-utils xorg-xwayland \
+adwaita-icon-theme udisks2 \
+firefox firefox-i18n-ru \
+telegram-desktop curl \
+jre21-openjdk prismlauncher
 echo
-if [ "$rc" -eq 0 ]; then echo "Установка завершена."; else echo "Установка завершилась с ошибкой (код $rc)."; fi
-printf "Нажми Enter, чтобы закрыть..."; read _
-exit "$rc"
+echo "=== Steam ==="
+pacman -S --noconfirm --needed steam lib32-mesa lib32-vulkan-intel \
+|| echo "!! Steam не установился (скрипт продолжает работу)"
+echo "=== Этап Steam завершён, продолжаю установку. ==="
+usermod -aG wheel,video "$U"
+printf '%%wheel ALL=(ALL:ALL) ALL\n' > /etc/sudoers.d/10-wheel
+chmod 440 /etc/sudoers.d/10-wheel
+visudo -cf /etc/sudoers.d/10-wheel >/dev/null || rm -f /etc/sudoers.d/10-wheel
+cat > /usr/local/bin/pkg-install <<'EOF2'
+#!/bin/sh
+f="$(readlink -f "$1")"
+[ -f "$f" ] || { echo "Файл не найден: $1"; exit 1; }
+exec kitty --title "Установка пакета Arch" sh -c '
+echo "Устанавливаю: $1"; echo
+sudo pacman -U --noconfirm "$1"
+echo; printf "Готово. Нажми Enter, чтобы закрыть..."; read _
 ' sh "$f"
-EOF
-chmod 755 /usr/local/bin/arch-install
-install -d -m 0755 /usr/share/mime/packages
-cat > /usr/share/mime/packages/archlinux-package.xml <<'MIME_EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
-  <mime-type type="application/x-archlinux-package">
-    <comment>Arch Linux package</comment>
-    <glob pattern="*.pkg.tar.zst"/>
-    <glob pattern="*.pkg.tar.xz"/>
-    <glob pattern="*.pkg.tar.gz"/>
-    <glob pattern="*.pkg.tar"/>
-  </mime-type>
-</mime-info>
-MIME_EOF
-if command -v update-mime-database >/dev/null 2>&1; then
-  update-mime-database /usr/share/mime
-fi
+EOF2
+chmod 755 /usr/local/bin/pkg-install
 cat > /usr/local/bin/launcher.sh <<'EOF'
 #!/bin/sh
-if pkill -0 -x wofi 2>/dev/null; then
-  pkill -x wofi 2>/dev/null || true
-  exit 0
+# повторное нажатие закрывает wofi
+if pgrep -x wofi >/dev/null 2>&1; then
+pkill -x wofi
+exit 0
 fi
 exec wofi --show drun
 EOF
@@ -986,8 +894,8 @@ class FilesWindow(Gtk.Window):
             self.open_path(row[5])
 
     def open_path(self, path):
-        if path.lower().endswith((".pkg.tar.zst", ".pkg.tar.xz", ".pkg.tar.gz", ".pkg.tar")) and shutil.which("arch-install"):
-            subprocess.Popen(["arch-install", path], start_new_session=True)
+        if path.lower().endswith((".pkg.tar.zst", ".pkg.tar.xz")) and shutil.which("pkg-install"):
+            subprocess.Popen(["pkg-install", path], start_new_session=True)
             self.say("Устанавливаю: " + os.path.basename(path))
             return
         ok = False
@@ -1390,7 +1298,7 @@ from gi.repository import Gdk, GLib, Gtk
 
 LOCK = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "power-menu.pid")
 CSS = b"""
-* { font-family: "DejaVu Sans Mono", "Font Awesome 7 Free", monospace; }
+* { font-family: "DejaVu Sans Mono", "FontAwesome", monospace; }
 window { background-color: rgba(6,6,8,0.60); }
 .card { background-color: rgba(14,14,16,0.80); border: 1px solid rgba(255,255,255,0.40);
 border-radius: 20px; padding: 22px 24px 14px 24px; }
@@ -1499,7 +1407,7 @@ class PowerMenu(Gtk.Window):
 
     def run(self, cmd):
         if cmd == "exit":
-            subprocess.Popen(["hyprctl", "dispatch", "exit"])
+            subprocess.Popen(["hyprctl", "dispatch", "hl.dsp.exit()"])
         else:
             subprocess.Popen(["systemctl", cmd])
         self.quit()
@@ -1510,6 +1418,7 @@ class PowerMenu(Gtk.Window):
         except OSError:
             pass
         self.destroy()
+        Gtk.main_quit()
 
 def main():
     GLib.set_prgname("power-menu")
@@ -1535,45 +1444,34 @@ if __name__ == "__main__":
     main()
 EOF
 chmod 755 /usr/local/bin/power-menu
-ensure_user_dir() {
-  local dir="$1" parent
-  [[ "$dir" == "$H" ]] && return 0
-  [[ ! -L "$dir" ]] || die "Не перехожу по символической ссылке каталога: $dir"
-  if [[ -d "$dir" ]]; then
-    chown "$U:$UG" "$dir"
-    return 0
-  fi
-  parent="$(dirname "$dir")"
-  ensure_user_dir "$parent"
-  install -d -m 0755 -o "$U" -g "$UG" "$dir"
-}
-
 w() {
-  local target="$1" dir tmp
-  dir="$(dirname "$target")"
-  ensure_user_dir "$dir"
-  [[ ! -L "$target" ]] || die "Не перезаписываю символическую ссылку: $target"
-  [[ ! -e "$target" || -f "$target" ]] || die "Целевой путь не является обычным файлом: $target"
-  if [[ -f "$target" && ! -e "$target.bak" && ! -L "$target.bak" ]]; then
-    cp -p -- "$target" "$target.bak"
-    chown "$U:$UG" "$target.bak"
-  fi
-  tmp="$(mktemp "$dir/.install.XXXXXX")"
-  cat > "$tmp"
-  chown "$U:$UG" "$tmp"
-  chmod 0644 "$tmp"
-  mv -f -- "$tmp" "$target"
+mkdir -p "$(dirname "$1")"
+if [ -f "$1" ] && [ ! -f "$1.bak" ]; then cp -p "$1" "$1.bak"; fi
+cat > "$1"
 }
+rm -f "$H/.config/hypr/quick-kill.sh"
+[ ! -f "$H/.config/hypr/hyprland.conf" ] || mv "$H/.config/hypr/hyprland.conf" "$H/.config/hypr/hyprland.conf.old"
 w "$H/.config/hypr/hyprland.lua" <<'EOF'
--- Hyprland 0.57+ configuration (Lua API).
--- Official API reference: https://wiki.hypr.land/configuring/
+local mod = "SUPER"
 
-hl.monitor({ output = "", mode = "preferred", position = "auto", scale = 1 })
+hl.monitor({ output = "", mode = "preferred", position = "auto", scale = "auto" })
 
-hl.env("XCURSOR_SIZE", "24")
-hl.env("HYPRCURSOR_SIZE", "24")
+hl.on("hyprland.start", function()
+  hl.exec_cmd("dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP")
+  hl.exec_cmd("sh ~/.config/hypr/wallpaper.sh")
+  hl.exec_cmd("waybar")
+  hl.exec_cmd("lxqt-policykit-agent")
+end)
 
 hl.config({
+  input = {
+    kb_layout = "us,ru",
+    kb_options = "grp:alt_shift_toggle",
+    follow_mouse = 1,
+    repeat_rate = 40,
+    repeat_delay = 250,
+    touchpad = { natural_scroll = true },
+  },
   general = {
     gaps_in = 6,
     gaps_out = 10,
@@ -1588,78 +1486,41 @@ hl.config({
     rounding = 10,
     active_opacity = 1.0,
     inactive_opacity = 1.0,
-    blur = {
-      enabled = true,
-      size = 6,
-      passes = 3,
-    },
+    blur = { enabled = true, size = 6, passes = 3 },
   },
-  input = {
-    kb_layout = "us,ru",
-    kb_options = "grp:alt_shift_toggle",
-    follow_mouse = 1,
-    repeat_rate = 40,
-    repeat_delay = 250,
-    touchpad = {
-      natural_scroll = true,
-    },
-  },
+  animations = { enabled = true },
   misc = {
+    focus_on_close = 1,
     disable_hyprland_logo = true,
-  },
-  dwindle = {
-    -- Keep the classic side-by-side tiling behavior.
-    preserve_split = true,
-    force_split = 2,
-    default_split_ratio = 1.0,
-    smart_split = false,
-    smart_resizing = true,
+    disable_splash_rendering = true,
   },
 })
 
-hl.curve("ease", { type = "bezier", points = { { 0.22, 1.0 }, { 0.36, 1.0 } } })
-hl.animation({ leaf = "global", enabled = true, speed = 5, bezier = "ease" })
-hl.animation({ leaf = "windows", enabled = true, speed = 5, bezier = "ease", style = "popin 85%" })
-hl.animation({ leaf = "windowsOut", enabled = true, speed = 1, bezier = "ease", style = "popin 85%" })
-hl.animation({ leaf = "fade", enabled = true, speed = 5, bezier = "ease" })
-hl.animation({ leaf = "fadeOut", enabled = true, speed = 1, bezier = "ease" })
+hl.curve("ease", { type = "bezier", points = { {0.22, 1}, {0.36, 1} } })
+hl.animation({ leaf = "windows",    enabled = true, speed = 5, bezier = "ease", style = "popin 85%" })
+hl.animation({ leaf = "fade",       enabled = true, speed = 5, bezier = "ease" })
 hl.animation({ leaf = "workspaces", enabled = true, speed = 5, bezier = "ease", style = "slide" })
 
--- Autostart only the services used by this lightweight desktop.
-hl.on("hyprland.start", function()
-  hl.exec_cmd("dbus-update-activation-environment --systemd WAYLAND_DISPLAY XDG_CURRENT_DESKTOP")
-  hl.exec_cmd("bash ~/.config/hypr/wallpaper.sh")
-  hl.exec_cmd("waybar")
-  hl.exec_cmd("/usr/lib/hyprpolkitagent/hyprpolkitagent")
-end)
-
-local mod = "SUPER"
-
--- Applications
 hl.bind(mod .. " + Return", hl.dsp.exec_cmd("kitty sh ~/.config/fastfetch/show.sh"))
 hl.bind(mod .. " + D", hl.dsp.exec_cmd("launcher.sh"))
 hl.bind(mod .. " + B", hl.dsp.exec_cmd("firefox"))
 hl.bind(mod .. " + E", hl.dsp.exec_cmd("files"))
-hl.bind(mod .. " + W", hl.dsp.exec_cmd("bash ~/.config/hypr/wallpaper.sh next"))
-hl.bind(mod .. " + SHIFT + Escape", hl.dsp.exec_cmd("power-menu"))
-
--- Window management
--- follow_mouse = 1 keeps focus under the pointer.
--- Both shortcuts use Hyprland's native close dispatcher: no shell or hyprctl process.
+hl.bind(mod .. " + W", hl.dsp.exec_cmd("sh ~/.config/hypr/wallpaper.sh next"))
 hl.bind(mod .. " + Q", hl.dsp.window.close())
-hl.bind(mod .. " + SHIFT + Q", hl.dsp.window.close())
-hl.bind(mod .. " + F", hl.dsp.window.fullscreen({ action = "toggle" }))
+hl.bind(mod .. " + SHIFT + Q", hl.dsp.window.close(), { repeating = true })
+hl.bind(mod .. " + SHIFT + Escape", hl.dsp.exec_cmd("power-menu"))
+hl.bind(mod .. " + F", hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" }))
 hl.bind(mod .. " + V", hl.dsp.window.float({ action = "toggle" }))
 
-for _, direction in ipairs({ "left", "right", "up", "down" }) do
-  hl.bind(mod .. " + " .. direction, hl.dsp.focus({ direction = direction }))
-  hl.bind(mod .. " + SHIFT + " .. direction, hl.dsp.window.move({ direction = direction }))
+for _, d in ipairs({ "left", "right", "up", "down" }) do
+  hl.bind(mod .. " + " .. d, hl.dsp.focus({ direction = d }))
+  hl.bind(mod .. " + SHIFT + " .. d, hl.dsp.window.move({ direction = d }))
 end
 
-hl.bind(mod .. " + CTRL + left", hl.dsp.window.resize({ x = -40, y = 0, relative = true }), { repeating = true })
-hl.bind(mod .. " + CTRL + right", hl.dsp.window.resize({ x = 40, y = 0, relative = true }), { repeating = true })
-hl.bind(mod .. " + CTRL + up", hl.dsp.window.resize({ x = 0, y = -40, relative = true }), { repeating = true })
-hl.bind(mod .. " + CTRL + down", hl.dsp.window.resize({ x = 0, y = 40, relative = true }), { repeating = true })
+hl.bind(mod .. " + CTRL + left",  hl.dsp.window.resize({ x = -40, y = 0,  relative = true }), { repeating = true })
+hl.bind(mod .. " + CTRL + right", hl.dsp.window.resize({ x = 40,  y = 0,  relative = true }), { repeating = true })
+hl.bind(mod .. " + CTRL + up",    hl.dsp.window.resize({ x = 0,   y = -40, relative = true }), { repeating = true })
+hl.bind(mod .. " + CTRL + down",  hl.dsp.window.resize({ x = 0,   y = 40,  relative = true }), { repeating = true })
 
 hl.bind(mod .. " + mouse:272", hl.dsp.window.drag(), { mouse = true })
 hl.bind(mod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })
@@ -1673,33 +1534,21 @@ hl.bind(mod .. " + Tab", hl.dsp.focus({ workspace = "e+1" }))
 hl.bind(mod .. " + mouse_down", hl.dsp.focus({ workspace = "e+1" }))
 hl.bind(mod .. " + mouse_up", hl.dsp.focus({ workspace = "e-1" }))
 hl.bind(mod .. " + Space", hl.dsp.exec_cmd("hyprctl switchxkblayout all next"))
-hl.bind(mod .. " + SHIFT + S", hl.dsp.exec_cmd("sh -c 'grim -g \"$(slurp)\" - | wl-copy'"))
+hl.bind(mod .. " + SHIFT + S", hl.dsp.exec_cmd('grim -g "$(slurp)" - | wl-copy'))
 
--- Hardware keys
 hl.bind("XF86AudioRaiseVolume", hl.dsp.exec_cmd("wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+"), { locked = true, repeating = true })
 hl.bind("XF86AudioLowerVolume", hl.dsp.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"), { locked = true, repeating = true })
 hl.bind("XF86AudioMute", hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"), { locked = true })
 hl.bind("XF86MonBrightnessUp", hl.dsp.exec_cmd("brightnessctl set 5%+"), { locked = true, repeating = true })
 hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("brightnessctl set 5%-"), { locked = true, repeating = true })
 
--- Normal application windows use the dwindle tiling layout:
--- first window fills the workspace; the next ones split it side by side.
--- Fullscreen is available manually with Super+F.
--- Only small utility windows float.
-hl.window_rule({
-  name = "wofi-floating",
-  match = { class = "wofi" },
-  float = true,
-  size = { 520, 330 },
-  center = true,
-})
--- The power menu requests fullscreen from GTK and is kept floating.
-hl.window_rule({ match = { class = "power-menu" }, float = true })
+hl.window_rule({ name = "float-wofi", match = { class = "^(wofi)$" }, float = true })
+hl.window_rule({ name = "float-power-menu", match = { class = "^(power-menu)$" }, float = true })
 EOF
 w "$H/.config/kitty/kitty.conf" <<'EOF'
 font_family DejaVu Sans Mono
 font_size 11
-symbol_map U+F000-U+F2E0 "Font Awesome 7 Free"
+symbol_map U+F000-U+F2E0 FontAwesome
 background_opacity 0.5
 window_padding_width 10
 background #0a0a0c
@@ -1734,7 +1583,6 @@ w "$H/.config/waybar/config.jsonc" <<'EOF'
 "on-click": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
 },
 "pulseaudio#mic": {
-"target": "source",
 "format": "{format_source}",
 "format-source": " {volume}%",
 "format-source-muted": " off",
@@ -1748,7 +1596,7 @@ w "$H/.config/waybar/config.jsonc" <<'EOF'
 }
 EOF
 w "$H/.config/waybar/style.css" <<'EOF'
-* { font-family: "DejaVu Sans Mono", "Font Awesome 7 Free"; font-size: 10px; border: none; min-height: 0; }
+* { font-family: "DejaVu Sans Mono", "FontAwesome"; font-size: 10px; border: none; min-height: 0; }
 window#waybar { background: transparent; color: #d4d4d4; }
 #workspaces, #window, #clock, #network, #temperature, #cpu, #memory, #language,
 #pulseaudio, #backlight, #battery,
@@ -1825,7 +1673,7 @@ Exec=files %f
 Icon=system-file-manager
 Terminal=false
 Categories=System;FileManager;
-MimeType=inode/directory;application/x-archlinux-package;
+MimeType=inode/directory;
 StartupWMClass=files
 EOF
 w "$H/.config/gtk-3.0/settings.ini" <<'EOF'
@@ -1833,193 +1681,178 @@ w "$H/.config/gtk-3.0/settings.ini" <<'EOF'
 gtk-application-prefer-dark-theme=1
 gtk-icon-theme-name=Adwaita
 EOF
-w "$H/.local/share/applications/arch-install.desktop" <<'EOF'
+w "$H/.local/share/applications/pkg-install.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Установщик пакетов Arch
-Exec=arch-install %f
+Exec=pkg-install %f
 Terminal=false
 NoDisplay=true
-MimeType=application/x-archlinux-package;
+MimeType=application/x-zstd-compressed-tar;
 EOF
 w "$H/.config/mimeapps.list" <<'EOF'
 [Default Applications]
-application/x-archlinux-package=arch-install.desktop
 inode/directory=files.desktop
+image/png=firefox.desktop
+image/jpeg=firefox.desktop
+image/gif=firefox.desktop
+image/webp=firefox.desktop
+image/svg+xml=firefox.desktop
 application/pdf=firefox.desktop
+video/mp4=firefox.desktop
+video/webm=firefox.desktop
+audio/mpeg=firefox.desktop
+audio/ogg=firefox.desktop
+audio/flac=firefox.desktop
+audio/x-wav=firefox.desktop
 x-scheme-handler/http=firefox.desktop
 x-scheme-handler/https=firefox.desktop
 text/html=firefox.desktop
 EOF
 w "$H/.config/hypr/wallpaper.sh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-# Обои: картинки в ~/Pictures/wall, Super+W — следующая.
-D="$HOME/Pictures/wall"
-C="$HOME/.cache/wallpaper"
-action="${1:-}"
-mkdir -p "$D" "$(dirname "$C")"
-mapfile -d '' -t images < <(
-  find "$D" -maxdepth 1 -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' \) -print0 | sort -z
-)
-pkill -x swaybg 2>/dev/null || true
-if (( ${#images[@]} == 0 )); then
-  exec swaybg -c 0a0a12
-fi
-current="$(cat "$C" 2>/dev/null || true)"
-selected="${images[0]}"
-if [[ "$action" == "next" ]]; then
-  found=0
-  for file in "${images[@]}"; do
-    if (( found )); then selected="$file"; break; fi
-    [[ "$file" == "$current" ]] && found=1
-  done
+#!/bin/sh
+# Обои: положи картинки в ~/Pictures/wall, Super+W - следующая
+D="$HOME/Pictures/wall"; C="$HOME/.cache/wallpaper"
+list="$(ls "$D"/*.png "$D"/*.jpg "$D"/*.jpeg "$D"/*.webp 2>/dev/null)"
+pkill swaybg 2>/dev/null
+[ -n "$list" ] || exec swaybg -c 0a0a12
+cur="$(cat "$C" 2>/dev/null)"
+if [ "$1" = next ]; then
+  f="$(printf '%s\n' "$list" | awk -v c="$cur" 'f{print;exit} $0==c{f=1}')"
+  [ -n "$f" ] || f="$(printf '%s\n' "$list" | head -n1)"
 else
-  for file in "${images[@]}"; do
-    if [[ "$file" == "$current" ]]; then selected="$file"; break; fi
-  done
+  f="$cur"; [ -f "$f" ] || f="$(printf '%s\n' "$list" | head -n1)"
 fi
-printf '%s\n' "$selected" > "$C"
-exec swaybg -i "$selected" -m fill
+mkdir -p "$(dirname "$C")"; printf '%s\n' "$f" > "$C"
+exec swaybg -i "$f" -m fill
 EOF
 grep -qF 'e[90m' "$H/.bashrc" || cat >> "$H/.bashrc" <<'EOF'
 PS1='\[\e[90m\] \[\e[97m\]\u \[\e[90m\] \[\e[37m\]\w \[\e[0m\]\$ '
 EOF
-if ! grep -qs 'Hyprland' "$H/.bash_profile"; then
+if ! grep -qsi 'hyprland' "$H/.bash_profile"; then
+[ -f "$H/.bash_profile" ] || echo '[ -f ~/.bashrc ] && . ~/.bashrc' > "$H/.bash_profile"
 cat >> "$H/.bash_profile" <<'EOF'
-[ -f "$HOME/.profile" ] && . "$HOME/.profile"
 if [ -z "${WAYLAND_DISPLAY:-}" ] && [ "${XDG_VTNR:-}" = 1 ]; then
-if command -v start-hyprland >/dev/null 2>&1; then start-hyprland; else Hyprland; fi
-exec bash
+start-hyprland || exec bash
 fi
 EOF
 fi
-ensure_user_dir "$H/Pictures"
-ensure_user_dir "$H/Pictures/wall"
-install_limusic() {
-  log "Установка Limusic из официального GitHub проекта"
-  local tmp release_url
-  tmp="$(mktemp -d)"
-  if ! curl --proto '=https' --tlsv1.2 -fsSL --retry 3 \
-      https://api.github.com/repos/SimoHypers/limusic/releases/latest \
-      -o "$tmp/release.json"; then
-    rm -rf "$tmp"
-    echo "!! Не удалось получить список официальных релизов Limusic."
-    return 0
-  fi
-  release_url="$(python - "$tmp/release.json" <<'PY'
-import json, sys
-with open(sys.argv[1], encoding="utf-8") as f:
-    release = json.load(f)
-assets = release.get("assets", [])
-matches = [a for a in assets if a.get("name", "").lower().endswith(".appimage")]
-native = [a for a in matches if any(tag in a.get("name", "").lower()
-                                    for tag in ("amd64", "x86_64", "x64"))]
-chosen = native[0] if native else (matches[0] if len(matches) == 1 else None)
-print(chosen.get("browser_download_url", "") if chosen else "")
-PY
-)"
-  if [[ -z "$release_url" ]]; then
-    rm -rf "$tmp"
-    echo "!! В последнем официальном релизе Limusic не найден AppImage."
-    return 0
-  fi
-  if [[ "$release_url" != https://github.com/SimoHypers/limusic/releases/download/* ]]; then
-    rm -rf "$tmp"
-    echo "!! GitHub вернул неожиданный адрес Limusic; установку пропускаю."
-    return 0
-  fi
-  if curl --proto '=https' --tlsv1.2 -fL --retry 3 "$release_url" -o "$tmp/Limusic.AppImage"; then
-    install -d -m 0755 /opt/limusic
-    install -m 0755 "$tmp/Limusic.AppImage" /opt/limusic/Limusic.AppImage
-    cat > /usr/share/applications/limusic.desktop <<'DESKTOP_EOF'
-[Desktop Entry]
-Type=Application
-Name=Limusic
-Comment=YouTube Music desktop client
-Exec=/opt/limusic/Limusic.AppImage --appimage-extract-and-run
-Icon=audio-x-generic
-Terminal=false
-Categories=AudioVideo;Audio;Player;
-StartupWMClass=limusic
-DESKTOP_EOF
-    echo "ok: Limusic установлен из официального GitHub релиза."
-  else
-    echo "!! Не удалось загрузить Limusic."
-  fi
-  rm -rf "$tmp"
+mkdir -p "$H/Pictures/wall"
+chown -R "$U:$(id -gn "$U")" "$H/.config" "$H/Pictures" "$H/.bash_profile" "$H/.bashrc" \
+"$H/.local" 2>/dev/null || true
+FA="$(fc-list : family 2>/dev/null | grep -o 'Font Awesome [0-9]* Free' | head -n1 || true)"
+FA="${FA:-Font Awesome 7 Free}"
+sed -i "s/FontAwesome/$FA/g" /usr/local/bin/power-menu \
+"$H/.config/kitty/kitty.conf" "$H/.config/waybar/style.css"
+chown -R "$U:$(id -gn "$U")" "$H/.config" 2>/dev/null || true
+# fetch URL ФАЙЛ [sums]  - скачать; с "sums" сверить SHA256 по SHA256SUMS.txt из того же релиза
+fetch() {
+curl -fL --retry 3 -o "$2" "$1" || return 1
+[ "${3:-}" = sums ] || return 0
+local want have
+want="$(curl -fsSL "${1%/*}/SHA256SUMS.txt" 2>/dev/null | grep -F "${1##*/}" | awk '{print $1}' | head -n1 || true)"
+have="$(sha256sum "$2" | awk '{print $1}')"
+[ -n "$want" ] && [ "$want" = "$have" ] || { echo "!! контрольная сумма не подтверждена: ${1##*/}"; rm -f "$2"; return 1; }
 }
-
-install_limusic
-
-install_extras() {
-  echo "=== Дополнительные приложения (необязательно) ==="
-  pacman -S --needed --noconfirm jdk21-openjdk || echo "!! Java не установилась"
-  local P="$H/.local/opt/prismlauncher"
-  ensure_user_dir "$H/.local"
-  ensure_user_dir "$H/.local/opt"
-  ensure_user_dir "$P"
-  if [ ! -x "$P/squashfs-root/AppRun" ]; then
-    local url
-    url="https://github.com/PrismLauncher/PrismLauncher/releases/latest/download/PrismLauncher-Linux-x86_64.AppImage"
-    if curl --proto '=https' --tlsv1.2 -fL --retry 3 -o "$P/PrismLauncher.AppImage" "$url"; then
-      chmod 755 "$P/PrismLauncher.AppImage"
-      (cd "$P" && ./PrismLauncher.AppImage --appimage-extract >/dev/null 2>&1 && rm -f PrismLauncher.AppImage) || true
-    fi
-  fi
-  if [ -x "$P/squashfs-root/AppRun" ]; then
-    cat > /usr/local/bin/prismlauncher <<'PRISM_EOF'
-#!/bin/sh
-exec "${HOME}/.local/opt/prismlauncher/squashfs-root/AppRun" "$@"
-PRISM_EOF
-    # This wrapper runs as the desktop user, so HOME resolves correctly.
-    chmod 755 /usr/local/bin/prismlauncher
-    chown -R "$U:$(id -gn "$U")" "$P"
-    cat > /usr/share/applications/prismlauncher.desktop <<'DESK_EOF'
+# gh_asset РЕПО РЕГУЛЯРКА - ссылка на файл из последнего релиза на GitHub
+gh_asset() {
+curl -fsSL "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
+| grep -o 'https://[^"]*' | grep -E "$2" | head -n1 || true
+}
+# install_pkg ССЫЛКА ИМЯ [sums] - готовый .pkg.tar.zst
+install_pkg() {
+local f="/tmp/$2.pkg.tar.zst"
+if ! fetch "$1" "$f" "${3:-}"; then
+echo "!! $2 не скачался ($1)."
+echo "!! Скачай .pkg.tar.zst вручную и открой его двойным щелчком в Files (Super+E)."
+return 0
+fi
+pacman -U --noconfirm "$f" || echo "!! $2 не установился (скрипт продолжает работу)"
+rm -f "$f"
+}
+# install_appimage ССЫЛКА КОМАНДА НАЗВАНИЕ КАТЕГОРИИ [sums]
+install_appimage() {
+local url="$1" bin="$2" title="$3" cats="$4" P="/opt/$2" run icon
+if [ ! -x "$P/squashfs-root/AppRun" ]; then
+mkdir -p "$P"; rm -rf "$P/squashfs-root"
+if fetch "$url" "$P/app.AppImage" "${5:-}"; then
+chmod 755 "$P/app.AppImage"
+( cd "$P" && ./app.AppImage --appimage-extract >/dev/null 2>&1 && rm -f app.AppImage ) || true
+fi
+fi
+if [ -x "$P/squashfs-root/AppRun" ]; then run="$P/squashfs-root/AppRun"
+elif [ -x "$P/app.AppImage" ]; then run="$P/app.AppImage --appimage-extract-and-run"
+else echo "!! $title не поставился: нет доступа к сайту/GitHub. Включи VPN (Happ) и запусти install.sh ещё раз."; return 0; fi
+printf '#!/bin/sh\nexec %s "$@"\n' "$run" > "/usr/local/bin/$bin"
+chmod 755 "/usr/local/bin/$bin"
+icon="$(find "$P/squashfs-root" -maxdepth 1 -name '*.png' 2>/dev/null | head -n1 || true)"
+cat > "/usr/share/applications/$bin.desktop" <<DESK_EOF
 [Desktop Entry]
 Type=Application
-Name=Prism Launcher
-Comment=Minecraft launcher
-Exec=prismlauncher
-Icon=applications-games
+Name=$title
+Exec=$bin
+Icon=${icon:-application-x-executable}
 Terminal=false
-Categories=Game;
+Categories=$cats
 DESK_EOF
-    echo "ok: Prism Launcher (AppImage от GitHub)"
-  else
-    echo "!! Prism Launcher не загрузился; пропускаю."
-  fi
+echo "ok: $title"
 }
-
-if [ "${INSTALL_EXTRAS:-0}" = 1 ]; then
-  install_extras
+install_photocraft() {
+local u
+u="$(gh_asset storytold/photocraft 'x86_64.*\.pkg\.tar\.zst$')"
+if [ -n "$u" ]; then install_pkg "$u" photocraft sums; return 0; fi
+u="$(gh_asset storytold/photocraft 'x86_64.*\.AppImage$')"
+if [ -n "$u" ]; then install_appimage "$u" photocraft PhotoCraft "Graphics;" sums; return 0; fi
+echo "!! PhotoCraft: не нашёл сборку. Скачай её (Linux x86_64) со страницы"
+echo "!! https://github.com/storytold/photocraft/releases"
+}
+install_limusic() {
+local u
+u="$(gh_asset SimoHypers/limusic '(x86_64|amd64).*\.AppImage$')"
+if [ -n "$u" ]; then install_appimage "$u" limusic Limusic "AudioVideo;Audio;Player;"
+else echo "!! Limusic: не нашёл AppImage на https://github.com/SimoHypers/limusic/releases"; fi
+}
+if command -v curl >/dev/null 2>&1; then
+install_pkg https://github.com/Happ-proxy/happ-desktop/releases/latest/download/Happ.linux.x64.pkg.tar.zst happ
+install_photocraft
+install_appimage https://download.onlyoffice.com/install/desktop/editors/linux/DesktopEditors-x86_64.AppImage onlyoffice "ONLYOFFICE" "Office;"
+install_limusic
 else
-  echo "Дополнительный Prism Launcher пропущен. Для его установки: INSTALL_EXTRAS=1 bash install.sh $U"
+echo "!! curl не установился - дополнительные приложения пропущены"
 fi
-
-echo "=== Проверки и завершение ==="
-command -v Hyprland >/dev/null || { echo "ОШИБКА: Hyprland не найден"; exit 1; }
-command -v kitty >/dev/null || { echo "ОШИБКА: kitty не найден"; exit 1; }
-command -v python >/dev/null || { echo "ОШИБКА: Python не найден"; exit 1; }
-python -c 'import ast,pathlib; [ast.parse(pathlib.Path(p).read_text()) for p in ("/usr/local/bin/files", "/usr/local/bin/power-menu")]'
-bash -n "$H/.config/hypr/wallpaper.sh"
-if command -v luac >/dev/null 2>&1; then luac -p "$H/.config/hypr/hyprland.lua"; else echo "luac отсутствует; синтаксис Lua проверь после установки пакета lua."; fi
-for user_file in "$H/.bash_profile" "$H/.bashrc"; do
-  [[ ! -f "$user_file" || -L "$user_file" ]] || chown "$U:$UG" "$user_file"
+# wofi: оставляем только твои приложения, остальные записи прячем (NoDisplay) в ~/.local/share/applications
+allow="$( { for p in steam telegram-desktop prismlauncher happ; do pacman -Ql "$p" 2>/dev/null; done \
+| awk '{print $2}' | grep '^/usr/share/applications/.*\.desktop$' | while read -r f; do basename "$f"; done
+printf '%s\n' firefox.desktop onlyoffice.desktop photocraft.desktop limusic.desktop; } )"
+mkdir -p "$H/.local/share/applications"
+for f in /usr/share/applications/*.desktop; do
+[ -e "$f" ] || continue
+b="${f##*/}"; t="$H/.local/share/applications/$b"
+if printf '%s\n' "$allow" | grep -qxF "$b"; then
+{ [ ! -f "$t" ] || ! grep -q '^# hidden-by-install' "$t"; } || rm -f "$t"
+continue
+fi
+{ [ ! -e "$t" ] || grep -q '^# hidden-by-install' "$t"; } || continue
+{ echo '# hidden-by-install'
+awk '/^NoDisplay=/{next} {print} !d && /^\[Desktop Entry\]/{print "NoDisplay=true"; d=1}' "$f"; } > "$t"
 done
+chown -R "$U:$(id -gn "$U")" "$H/.local" 2>/dev/null || true
+rm -f "$H/.cache/wofi-drun"
+echo "=== Чистка мусора ==="
+orph="$(pacman -Qdtq 2>/dev/null || true)"
+[ -z "$orph" ] || pacman -Rns --noconfirm $orph || true
+pacman -Sc --noconfirm >/dev/null 2>&1 || true
+journalctl --vacuum-size=50M >/dev/null 2>&1 || true
+rm -f /tmp/*.pkg.tar.zst
+rm -rf "$H/.cache/thumbnails"
 echo
-echo "Готово. Перезагрузи компьютер: reboot"
-echo "Проверки установщика выполнены; запуск на этой машине не производился."
-echo "Hyprland запускается автоматически на TTY1."
-echo "NVIDIA-драйверы не удалялись и не заменялись."
-if [[ "$INSTALL_STEAM" == 1 ]]; then
-  echo "Steam установлен из multilib."
-else
-  echo "Steam пропущен (INSTALL_STEAM=0)."
-fi
+echo "Готово. ПЕРЕЗАГРУЗИСЬ (reboot)."
+echo "После входа на TTY1 Hyprland запустится сам."
+echo "NVIDIA: драйверы удалены и не устанавливаются - система работает на встройке (Intel)."
+echo "Steam: запусти из лаунчера (Super+D) уже после входа в Hyprland."
 echo
 echo "Горячие клавиши:"
 echo "  Super+W           - следующие обои (картинки в ~/Pictures/wall)"
-echo "  Super+Shift+Esc   - меню питания"
+echo "  Super+Shift+Esc   - меню питания (повторное нажатие закрывает)"
 echo "  Super+Q           - закрыть активное окно"
-echo "  Super+Shift+Q     - закрыть окно под курсором"
+echo "  Super+Shift+Q     - зажми и води курсором: окна под ним закрываются подряд"
