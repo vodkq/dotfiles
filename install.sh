@@ -21,9 +21,10 @@ hyprland hyprland-guiutils xdg-desktop-portal-hyprland \
 kitty waybar wofi swaybg \
 pipewire pipewire-pulse wireplumber \
 brightnessctl grim slurp wl-clipboard \
-ttf-dejavu ttf-font-awesome polkit lxqt-policykit \
+ttf-dejavu ttf-font-awesome noto-fonts noto-fonts-emoji ttf-liberation \
+papirus-icon-theme polkit lxqt-policykit \
 fastfetch cava python-gobject gtk3 mesa vulkan-intel \
-xdg-utils xorg-xwayland \
+xdg-utils xdg-user-dirs xorg-xwayland qt6-wayland nano mpv \
 adwaita-icon-theme udisks2 \
 firefox firefox-i18n-ru \
 telegram-desktop curl \
@@ -1490,7 +1491,6 @@ hl.config({
   },
   animations = { enabled = true },
   misc = {
-    focus_on_close = 1,
     disable_hyprland_logo = true,
     disable_splash_rendering = true,
   },
@@ -1679,7 +1679,7 @@ EOF
 w "$H/.config/gtk-3.0/settings.ini" <<'EOF'
 [Settings]
 gtk-application-prefer-dark-theme=1
-gtk-icon-theme-name=Adwaita
+gtk-icon-theme-name=Papirus-Dark
 EOF
 w "$H/.local/share/applications/pkg-install.desktop" <<'EOF'
 [Desktop Entry]
@@ -1745,6 +1745,7 @@ FA="${FA:-Font Awesome 7 Free}"
 sed -i "s/FontAwesome/$FA/g" /usr/local/bin/power-menu \
 "$H/.config/kitty/kitty.conf" "$H/.config/waybar/style.css"
 chown -R "$U:$(id -gn "$U")" "$H/.config" 2>/dev/null || true
+runuser -u "$U" -- env HOME="$H" xdg-user-dirs-update 2>/dev/null || true
 # fetch URL ФАЙЛ [sums]  - скачать; с "sums" сверить SHA256 по SHA256SUMS.txt из того же релиза
 fetch() {
 curl -fL --retry 3 -o "$2" "$1" || return 1
