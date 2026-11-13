@@ -23,12 +23,12 @@ nv="$(pacman -Qq 2>/dev/null | grep -E '^(nvidia|lib32-nvidia|opencl-nvidia|lib3
 [ -z "$nv" ] || pacman -Rns --noconfirm $nv || true
 pacman -S --noconfirm --needed \
   hyprland hyprland-guiutils xdg-desktop-portal-hyprland xorg-xwayland qt6-wayland \
-  kitty waybar wofi swaybg \
+  alacritty waybar wofi swaybg \
   pipewire pipewire-pulse wireplumber \
   brightnessctl grim slurp wl-clipboard \
   ttf-dejavu ttf-font-awesome noto-fonts-emoji papirus-icon-theme adwaita-icon-theme lxqt-policykit ttf-jetbrains-mono-nerd ttf-nerd-fonts-symbols \
   python-gobject gtk3 mesa vulkan-intel udisks2 xdg-utils xdg-user-dirs \
-  fastfetch cava nano curl \
+  fastfetch chafa cava nano curl \
   firefox firefox-i18n-ru telegram-desktop \
   jre21-openjdk prismlauncher
 echo "=== Steam ==="
@@ -46,7 +46,7 @@ cat > /usr/local/bin/pkg-install <<'EOF2'
 #!/bin/sh
 f="$(readlink -f "$1")"
 [ -f "$f" ] || { echo "Файл не найден: $1"; exit 1; }
-exec kitty --title "Установка пакета Arch" sh -c '
+exec alacritty --title "Установка пакета Arch" -e sh -c '
 echo "Устанавливаю: $1"; echo
 sudo pacman -U --noconfirm "$1"
 echo; printf "Готово. Нажми Enter, чтобы закрыть..."; read _
@@ -917,7 +917,7 @@ class FilesWindow(Gtk.Window):
         ctype, _ = Gio.content_type_guess(path, None)
         try:
             if Gio.content_type_is_a(ctype, "text/plain") and shutil.which("nano"):
-                subprocess.Popen(["kitty", "nano", path], start_new_session=True)
+                subprocess.Popen(["alacritty", "-e", "nano", path], start_new_session=True)
             else:
                 subprocess.Popen(["firefox", path], start_new_session=True)
         except Exception as e:
@@ -1081,9 +1081,9 @@ class FilesWindow(Gtk.Window):
     def open_terminal(self, path=None):
         path = path if path and os.path.isdir(path) else self.cwd
         try:
-            subprocess.Popen(["kitty", "--directory", path], start_new_session=True)
+            subprocess.Popen(["alacritty", "--working-directory", path], start_new_session=True)
         except OSError as e:
-            self.say("Не запустился kitty: " + str(e), True)
+            self.say("Не запустился alacritty: " + str(e), True)
 
     def toggle_mark(self, path):
         path = os.path.realpath(path)
@@ -1543,7 +1543,7 @@ hl.config({
   misc = {
     disable_hyprland_logo = true,
     disable_splash_rendering = true,
-    new_window_takes_over_fullscreen = 2,  -- новое окно не прячется за полноэкранным
+    on_focus_under_fullscreen = 2,  -- новое окно не прячется за полноэкранным
   },
 })
 
@@ -1552,7 +1552,7 @@ hl.animation({ leaf = "windows",    enabled = true, speed = 5, bezier = "ease", 
 hl.animation({ leaf = "fade",       enabled = true, speed = 5, bezier = "ease" })
 hl.animation({ leaf = "workspaces", enabled = true, speed = 5, bezier = "ease", style = "slide" })
 
-hl.bind(mod .. " + Return", hl.dsp.exec_cmd("kitty sh ~/.config/fastfetch/show.sh"))
+hl.bind(mod .. " + Return", hl.dsp.exec_cmd("alacritty -e sh ~/.config/fastfetch/show.sh"))
 hl.bind(mod .. " + D", hl.dsp.exec_cmd("/usr/local/bin/launcher.sh"))
 hl.bind(mod .. " + B", hl.dsp.exec_cmd("firefox"))
 hl.bind(mod .. " + E", hl.dsp.exec_cmd("/usr/local/bin/files"))
@@ -1594,39 +1594,21 @@ hl.bind("XF86MonBrightnessUp", hl.dsp.exec_cmd("brightnessctl set 5%+"), { locke
 hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("brightnessctl set 5%-"), { locked = true, repeating = true })
 
 hl.window_rule({ name = "float-wofi", match = { class = "^(wofi)$" }, float = true })
-hl.window_rule({ name = "tile-kitty", match = { class = "^(kitty)$" }, tile = true })
 hl.window_rule({ name = "float-power-menu", match = { class = "^(power-menu)$" }, float = true })
 EOF
 
-# ---------- kitty ----------
-w "$H/.config/kitty/kitty.conf" <<'EOF'
-font_family DejaVu Sans Mono
-font_size 11
-symbol_map U+F000-U+F8FF FontAwesome
-background_opacity 0.78
-window_padding_width 10
-confirm_os_window_close 0
-foreground #cdd6f4
-background #0d111b
-cursor #89b4fa
-selection_foreground #0d111b
-selection_background #89b4fa
-color0  #1b2333
-color8  #4a5878
-color1  #f38ba8
-color9  #f5a3b9
-color2  #94e2d5
-color10 #a6ece1
-color3  #b4c8f0
-color11 #c9d8f5
-color4  #89b4fa
-color12 #a3c4fb
-color5  #b4befe
-color13 #c6cdfe
-color6  #74c7ec
-color14 #93d5f1
-color7  #bac2de
-color15 #e6ecf8
+# ---------- alacritty ----------
+w "$H/.config/alacritty/alacritty.toml" <<'EOF'
+[window]
+decorations = "none"
+opacity = 1.0
+
+[colors.primary]
+background = "#181a26"
+foreground = "#c0caf5"
+
+[font]
+size = 11.0
 EOF
 
 # ---------- cava (запуск только из терминала: cava) ----------
@@ -1654,7 +1636,7 @@ w "$H/.config/waybar/config.jsonc" <<'EOF'
   "modules-right": ["tray", "hyprland/language", "pulseaudio", "pulseaudio#mic", "backlight", "battery", "custom/power"],
   "custom/launcher": { "format": "\uf002", "tooltip": false, "on-click": "/usr/local/bin/launcher.sh" },
   "custom/files":    { "format": "\uf07b", "tooltip": false, "on-click": "/usr/local/bin/files" },
-  "custom/term":     { "format": "\uf120", "tooltip": false, "on-click": "kitty" },
+  "custom/term":     { "format": "\uf120", "tooltip": false, "on-click": "alacritty" },
   "custom/power":    { "format": "\uf011", "tooltip": false, "on-click": "/usr/local/bin/power-menu" },
   "hyprland/workspaces": { "format": "{id}", "persistent-workspaces": { "*": 5 } },
   "hyprland/language": { "format": "{short}" },
@@ -1741,7 +1723,7 @@ w "$H/.config/fastfetch/show.sh" <<'EOF'
 #!/bin/sh
 LOGO="$HOME/.config/fastfetch/logo.png"
 if [ -f "$LOGO" ]; then
-  fastfetch --kitty-direct "$LOGO" --logo-width 30 --logo-height 15
+  fastfetch --logo "$LOGO" --logo-type chafa --logo-width 30 --logo-height 15
 else
   fastfetch --logo none
 fi
@@ -1829,11 +1811,11 @@ EOF
 fi
 mkdir -p "$H/Pictures/wall"
 
-# реальное имя Font Awesome (иконки в waybar, kitty, меню питания)
+# реальное имя Font Awesome (иконки в waybar, меню питания)
 FA="$(fc-list : family 2>/dev/null | grep -o 'Font Awesome [0-9]* Free' | head -n1 || true)"
 FA="${FA:-Font Awesome 7 Free} Solid"
 sed -i "s/FontAwesome/$FA/g" /usr/local/bin/power-menu \
-  "$H/.config/kitty/kitty.conf" "$H/.config/waybar/style.css"
+  "$H/.config/waybar/style.css"
 
 chown -R "$U:$G" "$H/.config" "$H/.local" "$H/Pictures" "$H/.bashrc" "$H/.bash_profile" 2>/dev/null || true
 runuser -u "$U" -- env HOME="$H" xdg-user-dirs-update 2>/dev/null || true
