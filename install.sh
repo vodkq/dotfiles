@@ -1543,11 +1543,12 @@ hl.config({
   misc = {
     disable_hyprland_logo = true,
     disable_splash_rendering = true,
+    new_window_takes_over_fullscreen = 2,  -- новое окно не прячется за полноэкранным
   },
 })
 
 hl.curve("ease", { type = "bezier", points = { {0.22, 1}, {0.36, 1} } })
-hl.animation({ leaf = "windows",    enabled = true, speed = 5, bezier = "ease", style = "popin 85%" })
+hl.animation({ leaf = "windows",    enabled = true, speed = 5, bezier = "ease", style = "slide" })
 hl.animation({ leaf = "fade",       enabled = true, speed = 5, bezier = "ease" })
 hl.animation({ leaf = "workspaces", enabled = true, speed = 5, bezier = "ease", style = "slide" })
 
@@ -1593,6 +1594,7 @@ hl.bind("XF86MonBrightnessUp", hl.dsp.exec_cmd("brightnessctl set 5%+"), { locke
 hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("brightnessctl set 5%-"), { locked = true, repeating = true })
 
 hl.window_rule({ name = "float-wofi", match = { class = "^(wofi)$" }, float = true })
+hl.window_rule({ name = "tile-kitty", match = { class = "^(kitty)$" }, tile = true })
 hl.window_rule({ name = "float-power-menu", match = { class = "^(power-menu)$" }, float = true })
 EOF
 
