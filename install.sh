@@ -60,7 +60,7 @@ exec wofi --show drun
 EOF
 chmod 755 /usr/local/bin/launcher.sh
 cat > /usr/local/bin/files <<'EOF'
-#!/usr/bin/env python3
+#!/usr/bin/python3
 import json
 import os
 import pwd
@@ -1289,7 +1289,7 @@ if __name__ == "__main__":
 EOF
 chmod 755 /usr/local/bin/files
 cat > /usr/local/bin/power-menu <<'EOF'
-#!/usr/bin/env python3
+#!/usr/bin/python3
 import os
 import re
 import subprocess
@@ -1502,13 +1502,13 @@ hl.animation({ leaf = "fade",       enabled = true, speed = 5, bezier = "ease" }
 hl.animation({ leaf = "workspaces", enabled = true, speed = 5, bezier = "ease", style = "slide" })
 
 hl.bind(mod .. " + Return", hl.dsp.exec_cmd("kitty sh ~/.config/fastfetch/show.sh"))
-hl.bind(mod .. " + D", hl.dsp.exec_cmd("launcher.sh"))
+hl.bind(mod .. " + D", hl.dsp.exec_cmd("/usr/local/bin/launcher.sh"))
 hl.bind(mod .. " + B", hl.dsp.exec_cmd("firefox"))
-hl.bind(mod .. " + E", hl.dsp.exec_cmd("files"))
+hl.bind(mod .. " + E", hl.dsp.exec_cmd("/usr/local/bin/files"))
 hl.bind(mod .. " + W", hl.dsp.exec_cmd("sh ~/.config/hypr/wallpaper.sh next"))
 hl.bind(mod .. " + Q", hl.dsp.window.close())
 hl.bind(mod .. " + SHIFT + Q", hl.dsp.window.close(), { repeating = true })
-hl.bind(mod .. " + SHIFT + Escape", hl.dsp.exec_cmd("power-menu"))
+hl.bind(mod .. " + SHIFT + Escape", hl.dsp.exec_cmd("/usr/local/bin/power-menu"))
 hl.bind(mod .. " + F", hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle" }))
 hl.bind(mod .. " + V", hl.dsp.window.float({ action = "toggle" }))
 
@@ -1562,9 +1562,9 @@ w "$H/.config/waybar/config.jsonc" <<'EOF'
 "modules-left": ["hyprland/workspaces", "hyprland/window"],
 "modules-center": ["custom/launcher", "custom/files", "hyprland/language", "clock", "cpu", "memory", "temperature"],
 "modules-right": ["network", "pulseaudio", "pulseaudio#mic", "backlight", "battery", "custom/power"],
-"custom/launcher": { "format": "", "tooltip": false, "on-click": "launcher.sh" },
-"custom/files": { "format": "", "tooltip": false, "on-click": "files" },
-"custom/power": { "format": "", "tooltip": false, "on-click": "power-menu" },
+"custom/launcher": { "format": "", "tooltip": false, "on-click": "/usr/local/bin/launcher.sh" },
+"custom/files": { "format": "", "tooltip": false, "on-click": "/usr/local/bin/files" },
+"custom/power": { "format": "", "tooltip": false, "on-click": "/usr/local/bin/power-menu" },
 "hyprland/workspaces": { "format": "{id}", "persistent-workspaces": { "*": 5 } },
 "hyprland/window": { "format": "{title}", "max-length": 30, "separate-outputs": true },
 "hyprland/language": { "format": "{short}" },
@@ -1669,7 +1669,7 @@ w "$H/.local/share/applications/files.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Files
-Exec=files %f
+Exec=/usr/local/bin/files %f
 Icon=system-file-manager
 Terminal=false
 Categories=System;FileManager;
@@ -1685,7 +1685,7 @@ w "$H/.local/share/applications/pkg-install.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=Установщик пакетов Arch
-Exec=pkg-install %f
+Exec=/usr/local/bin/pkg-install %f
 Terminal=false
 NoDisplay=true
 MimeType=application/x-zstd-compressed-tar;
@@ -1741,7 +1741,7 @@ mkdir -p "$H/Pictures/wall"
 chown -R "$U:$(id -gn "$U")" "$H/.config" "$H/Pictures" "$H/.bash_profile" "$H/.bashrc" \
 "$H/.local" 2>/dev/null || true
 FA="$(fc-list : family 2>/dev/null | grep -o 'Font Awesome [0-9]* Free' | head -n1 || true)"
-FA="${FA:-Font Awesome 7 Free}"
+FA="${FA:-Font Awesome 7 Free} Solid"
 sed -i "s/FontAwesome/$FA/g" /usr/local/bin/power-menu \
 "$H/.config/kitty/kitty.conf" "$H/.config/waybar/style.css"
 chown -R "$U:$(id -gn "$U")" "$H/.config" 2>/dev/null || true
@@ -1781,10 +1781,11 @@ chmod 755 "$P/app.AppImage"
 ( cd "$P" && ./app.AppImage --appimage-extract >/dev/null 2>&1 && rm -f app.AppImage ) || true
 fi
 fi
+chmod -R a+rX "$P" 2>/dev/null || true
 if [ -x "$P/squashfs-root/AppRun" ]; then run="$P/squashfs-root/AppRun"
 elif [ -x "$P/app.AppImage" ]; then run="$P/app.AppImage --appimage-extract-and-run"
 else echo "!! $title не поставился: нет доступа к сайту/GitHub. Включи VPN (Happ) и запусти install.sh ещё раз."; return 0; fi
-printf '#!/bin/sh\nexec %s "$@"\n' "$run" > "/usr/local/bin/$bin"
+printf '#!/bin/sh\n%sexec %s "$@"\n' "${APPENV:-}" "$run" > "/usr/local/bin/$bin"
 chmod 755 "/usr/local/bin/$bin"
 icon="$(find "$P/squashfs-root" -maxdepth 1 -name '*.png' 2>/dev/null | head -n1 || true)"
 cat > "/usr/share/applications/$bin.desktop" <<DESK_EOF
@@ -1810,7 +1811,8 @@ echo "!! https://github.com/storytold/photocraft/releases"
 install_limusic() {
 local u
 u="$(gh_asset SimoHypers/limusic '(x86_64|amd64).*\.AppImage$')"
-if [ -n "$u" ]; then install_appimage "$u" limusic Limusic "AudioVideo;Audio;Player;"
+if [ -n "$u" ]; then APPENV='export WEBKIT_DISABLE_DMABUF_RENDERER=1
+' install_appimage "$u" limusic Limusic "AudioVideo;Audio;Player;"
 else echo "!! Limusic: не нашёл AppImage на https://github.com/SimoHypers/limusic/releases"; fi
 }
 if command -v curl >/dev/null 2>&1; then
