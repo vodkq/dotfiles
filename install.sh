@@ -1651,7 +1651,7 @@ w "$H/.config/waybar/config.jsonc" <<'EOF'
   "margin-top": 8, "margin-left": 14, "margin-right": 14,
   "modules-left": ["custom/launcher", "custom/files", "custom/term", "hyprland/workspaces"],
   "modules-center": ["clock"],
-  "modules-right": ["tray", "hyprland/language", "network", "pulseaudio", "pulseaudio#mic", "backlight", "battery", "custom/power"],
+  "modules-right": ["tray", "hyprland/language", "pulseaudio", "pulseaudio#mic", "backlight", "battery", "custom/power"],
   "custom/launcher": { "format": "\uf002", "tooltip": false, "on-click": "/usr/local/bin/launcher.sh" },
   "custom/files":    { "format": "\uf07b", "tooltip": false, "on-click": "/usr/local/bin/files" },
   "custom/term":     { "format": "\uf120", "tooltip": false, "on-click": "kitty" },
@@ -1660,11 +1660,6 @@ w "$H/.config/waybar/config.jsonc" <<'EOF'
   "hyprland/language": { "format": "{short}" },
   "tray": { "icon-size": 14, "spacing": 6 },
   "clock": { "format": "{:%H:%M}", "tooltip-format": "{:%A, %d %B %Y}" },
-  "network": {
-    "format-wifi": "\uf1eb",
-    "format-ethernet": "\uf6ff",
-    "format-disconnected": "\uf127",
-    "tooltip-format": "{essid} {ipaddr}"
   },
   "pulseaudio": {
     "format": "\uf028 {volume}%",
@@ -1696,7 +1691,7 @@ window#waybar {
 }
 tooltip { background: rgba(13,17,27,0.95); border: 1px solid rgba(137,180,250,0.40); border-radius: 8px; }
 tooltip label { color: #cdd6f4; }
-#clock, #network, #pulseaudio, #backlight, #battery, #language, #tray { padding: 0 7px; }
+#clock, #pulseaudio, #backlight, #battery, #language, #tray { padding: 0 7px; }
 #custom-launcher, #custom-files, #custom-term { color: #89b4fa; padding: 0 7px; }
 #custom-launcher { margin-left: 4px; }
 #custom-power { color: #f38ba8; padding: 0 10px 0 7px; }
