@@ -26,7 +26,7 @@ pacman -S --noconfirm --needed \
   kitty waybar wofi swaybg \
   pipewire pipewire-pulse wireplumber \
   brightnessctl grim slurp wl-clipboard \
-  ttf-dejavu ttf-font-awesome noto-fonts-emoji papirus-icon-theme adwaita-icon-theme lxqt-policykit \
+  ttf-dejavu ttf-font-awesome noto-fonts-emoji papirus-icon-theme adwaita-icon-theme lxqt-policykit ttf-jetbrains-mono-nerd ttf-nerd-fonts-symbols \
   python-gobject gtk3 mesa vulkan-intel udisks2 xdg-utils xdg-user-dirs \
   fastfetch cava nano curl \
   firefox firefox-i18n-ru telegram-desktop \
