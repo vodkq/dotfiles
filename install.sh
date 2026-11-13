@@ -1,4 +1,6 @@
 #!/bin/bash
+# install.sh - Arch + Hyprland: минимальная установка, сине-голубая тема
+# Запуск: su -   затем   bash install.sh [ИМЯ_ПОЛЬЗОВАТЕЛЯ]
 set -euo pipefail
 [ "$(id -u)" -eq 0 ] || { echo "Запусти от root: su -"; exit 1; }
 [ -f /etc/arch-release ] || { echo "Нужен Arch Linux"; exit 1; }
@@ -6,38 +8,40 @@ U="${1:-$(getent passwd 1000 | cut -d: -f1 || true)}"
 [ -n "$U" ] || { echo "Не нашёл пользователя. Запусти: bash install.sh ИМЯ"; exit 1; }
 id "$U" >/dev/null 2>&1 || { echo "Пользователь $U не существует"; exit 1; }
 H="/home/$U"
-# multilib нужен для Steam (32-бит библиотеки)
+G="$(id -gn "$U")"
+
+# ================= пакеты =================
+# multilib нужен только для Steam (32-бит библиотеки)
 if ! grep -q '^\[multilib\]' /etc/pacman.conf; then
-sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf
-grep -q '^\[multilib\]' /etc/pacman.conf \
-|| printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
+  sed -i '/^#\[multilib\]/,/^#Include/ s/^#//' /etc/pacman.conf
+  grep -q '^\[multilib\]' /etc/pacman.conf \
+    || printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> /etc/pacman.conf
 fi
-# Arch - rolling: ставить пакеты без полного обновления нельзя, поэтому сразу -Syu
+# Arch - rolling: без полного обновления ставить пакеты нельзя
 pacman -Syu --noconfirm --needed sudo
 nv="$(pacman -Qq 2>/dev/null | grep -E '^(nvidia|lib32-nvidia|opencl-nvidia|lib32-opencl-nvidia)' || true)"
 [ -z "$nv" ] || pacman -Rns --noconfirm $nv || true
 pacman -S --noconfirm --needed \
-hyprland hyprland-guiutils xdg-desktop-portal-hyprland \
-kitty waybar wofi swaybg \
-pipewire pipewire-pulse wireplumber \
-brightnessctl grim slurp wl-clipboard \
-ttf-dejavu ttf-font-awesome noto-fonts noto-fonts-emoji ttf-liberation \
-papirus-icon-theme polkit lxqt-policykit \
-fastfetch cava python-gobject gtk3 mesa vulkan-intel \
-xdg-utils xdg-user-dirs xorg-xwayland qt6-wayland nano mpv \
-adwaita-icon-theme udisks2 \
-firefox firefox-i18n-ru \
-telegram-desktop curl \
-jre21-openjdk prismlauncher
-echo
+  hyprland hyprland-guiutils xdg-desktop-portal-hyprland xorg-xwayland qt6-wayland \
+  kitty waybar wofi swaybg \
+  pipewire pipewire-pulse wireplumber \
+  brightnessctl grim slurp wl-clipboard \
+  ttf-dejavu ttf-font-awesome noto-fonts-emoji papirus-icon-theme adwaita-icon-theme lxqt-policykit \
+  python-gobject gtk3 mesa vulkan-intel udisks2 xdg-utils xdg-user-dirs \
+  fastfetch cava nano curl \
+  firefox firefox-i18n-ru telegram-desktop \
+  jre21-openjdk prismlauncher
 echo "=== Steam ==="
 pacman -S --noconfirm --needed steam lib32-mesa lib32-vulkan-intel \
-|| echo "!! Steam не установился (скрипт продолжает работу)"
-echo "=== Этап Steam завершён, продолжаю установку. ==="
+  || echo "!! Steam не установился (скрипт продолжает работу)"
+
+# ================= sudo =================
 usermod -aG wheel,video "$U"
 printf '%%wheel ALL=(ALL:ALL) ALL\n' > /etc/sudoers.d/10-wheel
 chmod 440 /etc/sudoers.d/10-wheel
 visudo -cf /etc/sudoers.d/10-wheel >/dev/null || rm -f /etc/sudoers.d/10-wheel
+
+# ================= системные утилиты =================
 cat > /usr/local/bin/pkg-install <<'EOF2'
 #!/bin/sh
 f="$(readlink -f "$1")"
@@ -49,16 +53,19 @@ echo; printf "Готово. Нажми Enter, чтобы закрыть..."; rea
 ' sh "$f"
 EOF2
 chmod 755 /usr/local/bin/pkg-install
+
 cat > /usr/local/bin/launcher.sh <<'EOF'
 #!/bin/sh
 # повторное нажатие закрывает wofi
 if pgrep -x wofi >/dev/null 2>&1; then
-pkill -x wofi
-exit 0
+  pkill -x wofi
+  exit 0
 fi
 exec wofi --show drun
 EOF
 chmod 755 /usr/local/bin/launcher.sh
+
+# ---------- файловый менеджер Files ----------
 cat > /usr/local/bin/files <<'EOF'
 #!/usr/bin/python3
 import json
@@ -74,6 +81,7 @@ import time
 from urllib.parse import unquote
 import gi
 gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, Gio, GLib, Gtk, Pango
 
 HOME = os.path.realpath(os.path.expanduser("~"))
@@ -86,42 +94,42 @@ DND = [Gtk.TargetEntry.new("text/uri-list", 0, 0)]
 ACT_COPY, ACT_MOVE = Gdk.DragAction.COPY, Gdk.DragAction.MOVE
 CSS = b"""
 * { font-family: "DejaVu Sans Mono", monospace; font-size: 11px; }
-window { background-color: rgba(16,16,18,0.80); color: #e6e6e6; }
-window.dialog, window.messagedialog { background-color: rgb(22,22,26); }
+window { background-color: rgba(13,17,27,0.82); color: #cdd6f4; }
+window.dialog, window.messagedialog { background-color: rgb(17,22,34); }
 .bar { padding: 8px 10px 4px 10px; }
-button { background-image: none; background-color: rgba(255,255,255,0.06); color: #e6e6e6;
-border: 1px solid rgba(255,255,255,0.28); border-radius: 14px; box-shadow: none;
+button { background-image: none; background-color: rgba(137,180,250,0.06); color: #cdd6f4;
+border: 1px solid rgba(137,180,250,0.25); border-radius: 14px; box-shadow: none;
 padding: 2px 10px; min-height: 0; min-width: 0; }
-button:hover { background-color: rgba(255,255,255,0.16); }
-button:checked { background-color: rgba(255,255,255,0.28); }
-entry { background-image: none; background-color: rgba(255,255,255,0.06); color: #e6e6e6;
-border: 1px solid rgba(255,255,255,0.28); border-radius: 14px; box-shadow: none;
+button:hover { background-color: rgba(137,180,250,0.16); }
+button:checked { background-color: rgba(137,180,250,0.30); }
+entry { background-image: none; background-color: rgba(137,180,250,0.06); color: #cdd6f4;
+border: 1px solid rgba(137,180,250,0.25); border-radius: 14px; box-shadow: none;
 padding: 2px 12px; min-height: 0; }
-entry:focus { border-color: rgba(255,255,255,0.65); }
-.side { background-color: rgba(255,255,255,0.04); border-right: 1px solid rgba(255,255,255,0.12); }
+entry:focus { border-color: #89b4fa; }
+.side { background-color: rgba(137,180,250,0.04); border-right: 1px solid rgba(137,180,250,0.15); }
 .side row { padding: 5px 10px; margin: 1px 8px; border-radius: 10px; background: transparent; }
-.side row:hover { background-color: rgba(255,255,255,0.08); }
-.side row:selected { background-color: rgba(255,255,255,0.20); color: #ffffff; }
-.side row:drop(active) { background-color: rgba(255,255,255,0.28); }
-.sect { color: #8a8a8a; font-size: 9px; padding: 10px 18px 2px 18px; }
-treeview.view { background-color: transparent; color: #e6e6e6; }
-treeview.view:hover { background-color: rgba(255,255,255,0.07); }
-treeview.view:selected { background-color: rgba(255,255,255,0.22); color: #ffffff; }
-treeview.view:drop(active) { border: 1px solid rgba(255,255,255,0.75); }
-treeview.view.dnd { border: 1px solid rgba(255,255,255,0.75); }
+.side row:hover { background-color: rgba(137,180,250,0.10); }
+.side row:selected { background-color: rgba(137,180,250,0.25); color: #ffffff; }
+.side row:drop(active) { background-color: rgba(137,180,250,0.35); }
+.sect { color: #7f8fae; font-size: 9px; padding: 10px 18px 2px 18px; }
+treeview.view { background-color: transparent; color: #cdd6f4; }
+treeview.view:hover { background-color: rgba(137,180,250,0.08); }
+treeview.view:selected { background-color: rgba(137,180,250,0.28); color: #ffffff; }
+treeview.view:drop(active) { border: 1px solid rgba(137,180,250,0.80); }
+treeview.view.dnd { border: 1px solid rgba(137,180,250,0.80); }
 treeview header button { background-color: transparent; border: none; border-radius: 0;
-border-bottom: 1px solid rgba(255,255,255,0.15); color: #8a8a8a; padding: 3px 8px; }
+border-bottom: 1px solid rgba(137,180,250,0.18); color: #7f8fae; padding: 3px 8px; }
 scrolledwindow, viewport { background-color: transparent; }
-scrollbar slider { background-color: rgba(255,255,255,0.30); border-radius: 4px; min-width: 6px; min-height: 6px; }
+scrollbar slider { background-color: rgba(137,180,250,0.35); border-radius: 4px; min-width: 6px; min-height: 6px; }
 scrollbar { background: transparent; border: none; }
-.status { color: #8a8a8a; padding: 3px 14px 6px 14px; }
-.err { color: #ff8a80; }
-.dim { color: #8a8a8a; }
-menu, .menu { background-color: rgb(24,24,28); color: #e6e6e6; border: 1px solid rgba(255,255,255,0.25);
+.status { color: #7f8fae; padding: 3px 14px 6px 14px; }
+.err { color: #f38ba8; }
+.dim { color: #7f8fae; }
+menu, .menu { background-color: rgb(17,22,34); color: #cdd6f4; border: 1px solid rgba(137,180,250,0.30);
 border-radius: 8px; padding: 4px; }
 menuitem { padding: 4px 10px; border-radius: 6px; }
-menuitem:hover { background-color: rgba(255,255,255,0.15); }
-separator { background-color: rgba(255,255,255,0.12); min-height: 1px; }
+menuitem:hover { background-color: rgba(137,180,250,0.18); }
+separator { background-color: rgba(137,180,250,0.15); min-height: 1px; }
 """
 PLACES = [
     ("user-home-symbolic", "Домашняя папка", HOME),
@@ -358,7 +366,6 @@ class FilesWindow(Gtk.Window):
         visual = screen.get_rgba_visual()
         if visual:
             self.set_visual(visual)
-            self.set_app_paintable(True)
         self.apply_css(screen)
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.add(root)
@@ -410,7 +417,6 @@ class FilesWindow(Gtk.Window):
         self.view.get_selection().set_mode(Gtk.SelectionMode.MULTIPLE)
         self.view.connect("row-activated", self.on_row_activated)
         self.view.connect("button-press-event", self.on_view_click)
-        self.view.get_selection().connect("changed", self.update_status)
         self.view.enable_model_drag_source(Gdk.ModifierType.BUTTON1_MASK, DND, ACT_COPY | ACT_MOVE)
         self.view.drag_dest_set(Gtk.DestDefaults.DROP, DND, ACT_COPY | ACT_MOVE)
         self.view.connect("drag-begin", self.on_drag_begin)
@@ -447,6 +453,8 @@ class FilesWindow(Gtk.Window):
         self.status.get_style_context().add_class("status")
         self.status.set_ellipsize(Pango.EllipsizeMode.END)
         root.pack_start(self.status, False, False, 0)
+        # подключаем после создания строки статуса
+        self.view.get_selection().connect("changed", self.update_status)
         self.connect("key-press-event", self.on_key)
         self.connect("notify::is-active", lambda *_: self.refresh_devices())
         GLib.timeout_add_seconds(20, self.on_timer)
@@ -472,7 +480,7 @@ class FilesWindow(Gtk.Window):
     def text_column(self, title, idx, key):
         r = Gtk.CellRendererText()
         r.set_property("xalign", 1.0)
-        r.set_property("foreground", "#9a9a9a")
+        r.set_property("foreground", "#8fa3c4")
         col = Gtk.TreeViewColumn(title, r, text=idx)
         col.set_min_width(110)
         col.set_clickable(True)
@@ -1288,6 +1296,8 @@ if __name__ == "__main__":
     main()
 EOF
 chmod 755 /usr/local/bin/files
+
+# ---------- меню питания ----------
 cat > /usr/local/bin/power-menu <<'EOF'
 #!/usr/bin/python3
 import os
@@ -1295,23 +1305,24 @@ import re
 import subprocess
 import gi
 gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gtk
 
 LOCK = os.path.join(os.environ.get("XDG_RUNTIME_DIR", "/tmp"), "power-menu.pid")
 CSS = b"""
 * { font-family: "DejaVu Sans Mono", "FontAwesome", monospace; }
-window { background-color: rgba(6,6,8,0.60); }
-.card { background-color: rgba(14,14,16,0.80); border: 1px solid rgba(255,255,255,0.40);
+window { background-color: rgba(5,8,14,0.60); }
+.card { background-color: rgba(13,17,27,0.85); border: 1px solid rgba(137,180,250,0.45);
 border-radius: 20px; padding: 22px 24px 14px 24px; }
-button { background-image: none; background-color: rgba(255,255,255,0.05); color: #e6e6e6;
-border: 1px solid rgba(255,255,255,0.28); border-radius: 16px; box-shadow: none; padding: 0; }
-button:hover, button:focus { background-color: rgba(255,255,255,0.16); border-color: rgba(255,255,255,0.80); }
-button.danger { color: #ff8a80; border-color: rgba(255,107,107,0.45); }
-button.danger:hover, button.danger:focus { background-color: rgba(255,107,107,0.22); border-color: rgba(255,107,107,0.90); }
+button { background-image: none; background-color: rgba(137,180,250,0.06); color: #cdd6f4;
+border: 1px solid rgba(137,180,250,0.25); border-radius: 16px; box-shadow: none; padding: 0; }
+button:hover, button:focus { background-color: rgba(137,180,250,0.18); border-color: #89b4fa; }
+button.danger { color: #f38ba8; border-color: rgba(243,139,168,0.45); }
+button.danger:hover, button.danger:focus { background-color: rgba(243,139,168,0.20); border-color: #f38ba8; }
 .icon { font-size: 30px; }
 .name { font-size: 11px; }
-.key { color: #8a8a8a; font-size: 9px; }
-.hint { color: #6f6f6f; font-size: 9px; }
+.key { color: #7f8fae; font-size: 9px; }
+.hint { color: #6b7a96; font-size: 9px; }
 """
 
 ITEMS = (
@@ -1320,6 +1331,7 @@ ITEMS = (
     ("\uf186", "Сон", "S", "suspend", False),
     ("\uf08b", "Выйти", "E", "exit", False),
 )
+
 
 def running():
     try:
@@ -1330,11 +1342,37 @@ def running():
     except Exception:
         return 0
 
+
+def drop_lock():
+    try:
+        os.remove(LOCK)
+    except OSError:
+        pass
+
+
+def logout():
+    # сначала обычная команда Hyprland, потом вариант для Lua-конфига, в конце - через logind
+    for args in (["hyprctl", "dispatch", "exit"], ["hyprctl", "dispatch", "hl.dsp.exit()"]):
+        try:
+            r = subprocess.run(args, capture_output=True, text=True, timeout=3)
+            if r.returncode == 0 and r.stdout.strip().lower().startswith("ok"):
+                return
+        except Exception:
+            pass
+    sid = os.environ.get("XDG_SESSION_ID")
+    try:
+        if sid:
+            subprocess.Popen(["loginctl", "terminate-session", sid], start_new_session=True)
+        else:
+            subprocess.Popen(["loginctl", "terminate-user", os.environ.get("USER", "")], start_new_session=True)
+    except Exception:
+        pass
+
+
 class PowerMenu(Gtk.Window):
     def __init__(self):
-        super().__init__()
+        super().__init__(title="power-menu")
         self.set_decorated(False)
-        self.set_app_paintable(True)
         screen = self.get_screen()
         visual = screen.get_rgba_visual()
         if visual:
@@ -1384,8 +1422,6 @@ class PowerMenu(Gtk.Window):
         self.add(bg)
         self.connect("key-press-event", self.on_key)
         self.fullscreen()
-        with open(LOCK, "w") as f:
-            f.write(str(os.getpid()))
 
     def focus_step(self, d):
         cur = self.get_focus()
@@ -1407,19 +1443,21 @@ class PowerMenu(Gtk.Window):
         return True
 
     def run(self, cmd):
+        self.hide()
         if cmd == "exit":
-            subprocess.Popen(["hyprctl", "dispatch", "hl.dsp.exit()"])
+            logout()
         else:
-            subprocess.Popen(["systemctl", cmd])
+            subprocess.Popen(["systemctl", cmd], start_new_session=True)
         self.quit()
 
     def quit(self):
-        try:
-            os.remove(LOCK)
-        except OSError:
-            pass
         self.destroy()
-        Gtk.main_quit()
+
+
+def on_destroy(*_):
+    drop_lock()
+    Gtk.main_quit()
+
 
 def main():
     GLib.set_prgname("power-menu")
@@ -1430,28 +1468,36 @@ def main():
             os.kill(pid, 15)
         except OSError:
             pass
-        try:
-            os.remove(LOCK)
-        except OSError:
-            pass
+        drop_lock()
         return
     w = PowerMenu()
-    w.connect("destroy", Gtk.main_quit)
+    w.connect("destroy", on_destroy)
     w.show_all()
+    try:
+        with open(LOCK, "w") as f:
+            f.write(str(os.getpid()))
+    except OSError:
+        pass
     w.buttons[0].grab_focus()
     Gtk.main()
+
 
 if __name__ == "__main__":
     main()
 EOF
 chmod 755 /usr/local/bin/power-menu
+
+# ================= конфиги пользователя =================
+# w ФАЙЛ - записать stdin в файл (старую версию один раз сохраняет в .bak)
 w() {
-mkdir -p "$(dirname "$1")"
-if [ -f "$1" ] && [ ! -f "$1.bak" ]; then cp -p "$1" "$1.bak"; fi
-cat > "$1"
+  mkdir -p "$(dirname "$1")"
+  if [ -f "$1" ] && [ ! -f "$1.bak" ]; then cp -p "$1" "$1.bak"; fi
+  cat > "$1"
 }
 rm -f "$H/.config/hypr/quick-kill.sh"
 [ ! -f "$H/.config/hypr/hyprland.conf" ] || mv "$H/.config/hypr/hyprland.conf" "$H/.config/hypr/hyprland.conf.old"
+
+# ---------- Hyprland ----------
 w "$H/.config/hypr/hyprland.lua" <<'EOF'
 local mod = "SUPER"
 
@@ -1474,19 +1520,23 @@ hl.config({
     touchpad = { natural_scroll = true },
   },
   general = {
-    gaps_in = 6,
-    gaps_out = 10,
-    border_size = 2,
+    gaps_in = 6,       -- между окнами
+    gaps_out = 14,     -- от краёв экрана до окон
+    border_size = 1,
     col = {
-      active_border = "rgba(ffffffee)",
-      inactive_border = "rgba(ffffff55)",
+      active_border = "rgba(89b4faee)",
+      inactive_border = "rgba(3a4a66aa)",
     },
     layout = "dwindle",
   },
+  dwindle = {
+    preserve_split = true,  -- раскладка не «прыгает» при закрытии окон
+    force_split = 2,        -- новое окно встаёт справа/снизу, экран делится пополам
+  },
   decoration = {
-    rounding = 10,
+    rounding = 8,
     active_opacity = 1.0,
-    inactive_opacity = 1.0,
+    inactive_opacity = 0.95,
     blur = { enabled = true, size = 6, passes = 3 },
   },
   animations = { enabled = true },
@@ -1545,125 +1595,187 @@ hl.bind("XF86MonBrightnessDown", hl.dsp.exec_cmd("brightnessctl set 5%-"), { loc
 hl.window_rule({ name = "float-wofi", match = { class = "^(wofi)$" }, float = true })
 hl.window_rule({ name = "float-power-menu", match = { class = "^(power-menu)$" }, float = true })
 EOF
+
+# ---------- kitty ----------
 w "$H/.config/kitty/kitty.conf" <<'EOF'
 font_family DejaVu Sans Mono
 font_size 11
-symbol_map U+F000-U+F2E0 FontAwesome
-background_opacity 0.5
+symbol_map U+F000-U+F8FF FontAwesome
+background_opacity 0.78
 window_padding_width 10
-background #0a0a0c
-foreground #e0e0e0
-cursor #ffffff
 confirm_os_window_close 0
+foreground #cdd6f4
+background #0d111b
+cursor #89b4fa
+selection_foreground #0d111b
+selection_background #89b4fa
+color0  #1b2333
+color8  #4a5878
+color1  #f38ba8
+color9  #f5a3b9
+color2  #94e2d5
+color10 #a6ece1
+color3  #b4c8f0
+color11 #c9d8f5
+color4  #89b4fa
+color12 #a3c4fb
+color5  #b4befe
+color13 #c6cdfe
+color6  #74c7ec
+color14 #93d5f1
+color7  #bac2de
+color15 #e6ecf8
 EOF
+
+# ---------- cava (запуск только из терминала: cava) ----------
+w "$H/.config/cava/config" <<'EOF'
+[general]
+bar_width = 2
+bar_spacing = 1
+
+[color]
+gradient = 1
+gradient_count = 4
+gradient_color_1 = '#1e3354'
+gradient_color_2 = '#3f6aa8'
+gradient_color_3 = '#89b4fa'
+gradient_color_4 = '#a6e3f5'
+EOF
+
+# ---------- waybar: одна тонкая полоса сверху ----------
 w "$H/.config/waybar/config.jsonc" <<'EOF'
 {
-"layer": "top", "height": 24, "margin-top": 5, "margin-left": 8, "margin-right": 8,
-"modules-left": ["hyprland/workspaces", "hyprland/window"],
-"modules-center": ["custom/launcher", "custom/files", "hyprland/language", "clock", "cpu", "memory", "temperature"],
-"modules-right": ["network", "pulseaudio", "pulseaudio#mic", "backlight", "battery", "custom/power"],
-"custom/launcher": { "format": "", "tooltip": false, "on-click": "/usr/local/bin/launcher.sh" },
-"custom/files": { "format": "", "tooltip": false, "on-click": "/usr/local/bin/files" },
-"custom/power": { "format": "", "tooltip": false, "on-click": "/usr/local/bin/power-menu" },
-"hyprland/workspaces": { "format": "{id}", "persistent-workspaces": { "*": 5 } },
-"hyprland/window": { "format": "{title}", "max-length": 30, "separate-outputs": true },
-"hyprland/language": { "format": "{short}" },
-"clock": { "format": "{:%H:%M  |  %d %b}", "tooltip-format": "{:%d %B %Y}" },
-"network": {
-"format-wifi": " {essid}",
-"format-ethernet": " {ifname}",
-"format-disconnected": "offline"
-},
-"cpu": { "format": "CPU {usage}%", "interval": 3 },
-"memory": { "format": "RAM {used:0.1f}G", "interval": 5 },
-"temperature": { "format": " {temperatureC}°C" },
-"pulseaudio": {
-"format": " {volume}%",
-"format-muted": " mute",
-"on-click": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
-},
-"pulseaudio#mic": {
-"format": "{format_source}",
-"format-source": " {volume}%",
-"format-source-muted": " off",
-"on-click": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"
-},
-"backlight": { "format": " {percent}%" },
-"battery": {
-"format": "{icon} {capacity}%",
-"format-icons": ["", "", "", "", ""]
-}
+  "layer": "top", "height": 26, "spacing": 2,
+  "margin-top": 8, "margin-left": 14, "margin-right": 14,
+  "modules-left": ["custom/launcher", "custom/files", "custom/term", "hyprland/workspaces"],
+  "modules-center": ["clock"],
+  "modules-right": ["tray", "hyprland/language", "network", "pulseaudio", "pulseaudio#mic", "backlight", "battery", "custom/power"],
+  "custom/launcher": { "format": "\uf002", "tooltip": false, "on-click": "/usr/local/bin/launcher.sh" },
+  "custom/files":    { "format": "\uf07b", "tooltip": false, "on-click": "/usr/local/bin/files" },
+  "custom/term":     { "format": "\uf120", "tooltip": false, "on-click": "kitty" },
+  "custom/power":    { "format": "\uf011", "tooltip": false, "on-click": "/usr/local/bin/power-menu" },
+  "hyprland/workspaces": { "format": "{id}", "persistent-workspaces": { "*": 5 } },
+  "hyprland/language": { "format": "{short}" },
+  "tray": { "icon-size": 14, "spacing": 6 },
+  "clock": { "format": "{:%H:%M}", "tooltip-format": "{:%A, %d %B %Y}" },
+  "network": {
+    "format-wifi": "\uf1eb",
+    "format-ethernet": "\uf6ff",
+    "format-disconnected": "\uf127",
+    "tooltip-format": "{essid} {ipaddr}"
+  },
+  "pulseaudio": {
+    "format": "\uf028 {volume}%",
+    "format-muted": "\uf6a9",
+    "on-click": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
+  },
+  "pulseaudio#mic": {
+    "format": "{format_source}",
+    "format-source": "\uf130",
+    "format-source-muted": "\uf131",
+    "on-click": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"
+  },
+  "backlight": { "format": "\uf185 {percent}%" },
+  "battery": {
+    "format": "{icon} {capacity}%",
+    "format-icons": ["\uf244", "\uf243", "\uf242", "\uf241", "\uf240"],
+    "states": { "warning": 25, "critical": 10 }
+  }
 }
 EOF
+
 w "$H/.config/waybar/style.css" <<'EOF'
-* { font-family: "DejaVu Sans Mono", "FontAwesome"; font-size: 10px; border: none; min-height: 0; }
-window#waybar { background: transparent; color: #d4d4d4; }
-#workspaces, #window, #clock, #network, #temperature, #cpu, #memory, #language,
-#pulseaudio, #backlight, #battery,
-#custom-launcher, #custom-files, #custom-power {
-background: rgba(10,10,12,0.72);
-border: 1px solid rgba(255,255,255,0.5);
-border-radius: 12px;
-padding: 0 9px;
-margin: 0 2px;
+* { font-family: "DejaVu Sans Mono", "FontAwesome"; font-size: 11px; border: none; border-radius: 0; min-height: 0; }
+window#waybar {
+  background: rgba(13,17,27,0.82);
+  color: #cdd6f4;
+  border: 1px solid rgba(137,180,250,0.35);
+  border-radius: 10px;
 }
-#custom-launcher, #custom-files, #custom-power { min-width: 22px; padding: 0; }
-#custom-launcher, #custom-files { color: #d8d3bd; }
-#custom-power { color: #ff6b6b; border-color: rgba(255,107,107,0.55); }
-#backlight { color: #a5bdff; }
-#window { color: #b4b4b4; }
-window#waybar.empty #window { background: transparent; border-color: transparent; }
-#workspaces { padding: 0 3px; }
-#workspaces button { color: #d4d4d4; background: transparent; padding: 0 7px; margin: 2px 0; border-radius: 9px; }
-#workspaces button.active { color: #101010; background: #b4b4b4; }
-#battery.warning { color: #ffcc66; }
-#battery.critical { color: #ff6b6b; }
+tooltip { background: rgba(13,17,27,0.95); border: 1px solid rgba(137,180,250,0.40); border-radius: 8px; }
+tooltip label { color: #cdd6f4; }
+#clock, #network, #pulseaudio, #backlight, #battery, #language, #tray { padding: 0 7px; }
+#custom-launcher, #custom-files, #custom-term { color: #89b4fa; padding: 0 7px; }
+#custom-launcher { margin-left: 4px; }
+#custom-power { color: #f38ba8; padding: 0 10px 0 7px; }
+#clock { color: #b4d0ff; font-weight: bold; }
+#language { color: #74c7ec; }
+#pulseaudio.muted, #pulseaudio.source-muted { color: #5c6b8a; }
+#backlight { color: #a6c8ff; }
+#workspaces { margin-left: 6px; }
+#workspaces button {
+  color: #7f8fae; background: rgba(137,180,250,0.10);
+  padding: 0; margin: 4px 2px; min-width: 16px; border-radius: 9px;
+  box-shadow: none; text-shadow: none;
+}
+#workspaces button:hover { background: rgba(137,180,250,0.30); color: #e6ecf8; }
+#workspaces button.active { background: #89b4fa; color: #0d111b; min-width: 28px; }
+#battery.warning { color: #f9e2af; }
+#battery.critical { color: #f38ba8; }
 EOF
+
+# ---------- wofi ----------
 w "$H/.config/wofi/config" <<'EOF'
 width=520
 height=330
-prompt=Search...
+prompt=Поиск...
 allow_images=true
 image_size=20
 insensitive=true
 hide_on_select=true
 EOF
 w "$H/.config/wofi/style.css" <<'EOF'
-window { background-color: rgba(14,14,16,0.82); border: 1px solid rgba(255,255,255,0.35); border-radius: 8px; font-family: "DejaVu Sans Mono"; font-size: 12px; }
-#input { background: transparent; color: #e6e6e6; border: none; margin: 4px; }
-#entry { padding: 4px 8px; }
-#entry:selected { background-color: rgba(255,255,255,0.18); }
-#text { color: #e6e6e6; margin-left: 6px; }
+window { background-color: rgba(13,17,27,0.88); border: 1px solid rgba(137,180,250,0.40); border-radius: 10px; font-family: "DejaVu Sans Mono"; font-size: 12px; }
+#input { background: rgba(137,180,250,0.08); color: #cdd6f4; border: 1px solid rgba(137,180,250,0.25); border-radius: 8px; margin: 6px; }
+#entry { padding: 4px 8px; border-radius: 6px; }
+#entry:selected { background-color: rgba(137,180,250,0.25); }
+#text { color: #cdd6f4; margin-left: 6px; }
 EOF
+
+# ---------- GTK, fastfetch, обои ----------
+w "$H/.config/gtk-3.0/settings.ini" <<'EOF'
+[Settings]
+gtk-application-prefer-dark-theme=1
+gtk-icon-theme-name=Papirus-Dark
+EOF
+
+# Картинка для fastfetch: положи PNG в ~/.config/fastfetch/logo.png (лучше 512x512)
+w "$H/.config/fastfetch/show.sh" <<'EOF'
+#!/bin/sh
+LOGO="$HOME/.config/fastfetch/logo.png"
+if [ -f "$LOGO" ]; then
+  fastfetch --kitty-direct "$LOGO" --logo-width 30 --logo-height 15
+else
+  fastfetch --logo none
+fi
+exec bash
+EOF
+
+w "$H/.config/hypr/wallpaper.sh" <<'EOF'
+#!/bin/sh
+# Обои: положи картинки в ~/Pictures/wall, Super+W - следующая
+D="$HOME/Pictures/wall"; C="$HOME/.cache/wallpaper"
+list="$(ls "$D"/*.png "$D"/*.jpg "$D"/*.jpeg "$D"/*.webp 2>/dev/null)"
+pkill swaybg 2>/dev/null
+[ -n "$list" ] || exec swaybg -c 0d111b
+cur="$(cat "$C" 2>/dev/null)"
+if [ "$1" = next ]; then
+  f="$(printf '%s\n' "$list" | awk -v c="$cur" 'f{print;exit} $0==c{f=1}')"
+  [ -n "$f" ] || f="$(printf '%s\n' "$list" | head -n1)"
+else
+  f="$cur"; [ -f "$f" ] || f="$(printf '%s\n' "$list" | head -n1)"
+fi
+mkdir -p "$(dirname "$C")"; printf '%s\n' "$f" > "$C"
+exec swaybg -i "$f" -m fill
+EOF
+
+# ---------- ярлыки и программы по умолчанию ----------
 w "$H/.local/share/applications/cava.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=cava
 Exec=cava
 NoDisplay=true
-EOF
-w "$H/.local/share/applications/firefox.desktop" <<'EOF'
-[Desktop Entry]
-Version=1.0
-Type=Application
-Name=Firefox
-Exec=firefox %u
-Icon=firefox
-Terminal=false
-Categories=Network;WebBrowser;
-MimeType=text/html;text/xml;application/xhtml+xml;x-scheme-handler/http;x-scheme-handler/https;
-StartupWMClass=firefox
-EOF
-# Картинка для fastfetch: положи PNG в ~/.config/fastfetch/logo.png (квадратное, лучше 512x512)
-w "$H/.config/fastfetch/show.sh" <<'EOF'
-#!/bin/sh
-LOGO="$HOME/.config/fastfetch/logo.png"
-if [ -f "$LOGO" ]; then
-fastfetch --kitty-direct "$LOGO" --logo-width 30 --logo-height 15
-else
-fastfetch --logo none
-fi
-exec bash
 EOF
 w "$H/.local/share/applications/files.desktop" <<'EOF'
 [Desktop Entry]
@@ -1675,11 +1787,6 @@ Terminal=false
 Categories=System;FileManager;
 MimeType=inode/directory;
 StartupWMClass=files
-EOF
-w "$H/.config/gtk-3.0/settings.ini" <<'EOF'
-[Settings]
-gtk-application-prefer-dark-theme=1
-gtk-icon-theme-name=Papirus-Dark
 EOF
 w "$H/.local/share/applications/pkg-install.desktop" <<'EOF'
 [Desktop Entry]
@@ -1709,147 +1816,146 @@ x-scheme-handler/http=firefox.desktop
 x-scheme-handler/https=firefox.desktop
 text/html=firefox.desktop
 EOF
-w "$H/.config/hypr/wallpaper.sh" <<'EOF'
-#!/bin/sh
-# Обои: положи картинки в ~/Pictures/wall, Super+W - следующая
-D="$HOME/Pictures/wall"; C="$HOME/.cache/wallpaper"
-list="$(ls "$D"/*.png "$D"/*.jpg "$D"/*.jpeg "$D"/*.webp 2>/dev/null)"
-pkill swaybg 2>/dev/null
-[ -n "$list" ] || exec swaybg -c 0a0a12
-cur="$(cat "$C" 2>/dev/null)"
-if [ "$1" = next ]; then
-  f="$(printf '%s\n' "$list" | awk -v c="$cur" 'f{print;exit} $0==c{f=1}')"
-  [ -n "$f" ] || f="$(printf '%s\n' "$list" | head -n1)"
-else
-  f="$cur"; [ -f "$f" ] || f="$(printf '%s\n' "$list" | head -n1)"
-fi
-mkdir -p "$(dirname "$C")"; printf '%s\n' "$f" > "$C"
-exec swaybg -i "$f" -m fill
+
+# ---------- bash ----------
+grep -qF '38;5;111m' "$H/.bashrc" 2>/dev/null || cat >> "$H/.bashrc" <<'EOF'
+PS1='\[\e[38;5;111m\]\u \[\e[38;5;67m\]\w \[\e[0m\]\$ '
 EOF
-grep -qF 'e[90m' "$H/.bashrc" || cat >> "$H/.bashrc" <<'EOF'
-PS1='\[\e[90m\] \[\e[97m\]\u \[\e[90m\] \[\e[37m\]\w \[\e[0m\]\$ '
-EOF
+# автозапуск Hyprland на TTY1
 if ! grep -qsi 'hyprland' "$H/.bash_profile"; then
-[ -f "$H/.bash_profile" ] || echo '[ -f ~/.bashrc ] && . ~/.bashrc' > "$H/.bash_profile"
-cat >> "$H/.bash_profile" <<'EOF'
+  [ -f "$H/.bash_profile" ] || echo '[ -f ~/.bashrc ] && . ~/.bashrc' > "$H/.bash_profile"
+  cat >> "$H/.bash_profile" <<'EOF'
 if [ -z "${WAYLAND_DISPLAY:-}" ] && [ "${XDG_VTNR:-}" = 1 ]; then
-start-hyprland || exec bash
+  start-hyprland || exec bash
 fi
 EOF
 fi
 mkdir -p "$H/Pictures/wall"
-chown -R "$U:$(id -gn "$U")" "$H/.config" "$H/Pictures" "$H/.bash_profile" "$H/.bashrc" \
-"$H/.local" 2>/dev/null || true
+
+# реальное имя Font Awesome (иконки в waybar, kitty, меню питания)
 FA="$(fc-list : family 2>/dev/null | grep -o 'Font Awesome [0-9]* Free' | head -n1 || true)"
 FA="${FA:-Font Awesome 7 Free} Solid"
 sed -i "s/FontAwesome/$FA/g" /usr/local/bin/power-menu \
-"$H/.config/kitty/kitty.conf" "$H/.config/waybar/style.css"
-chown -R "$U:$(id -gn "$U")" "$H/.config" 2>/dev/null || true
+  "$H/.config/kitty/kitty.conf" "$H/.config/waybar/style.css"
+
+chown -R "$U:$G" "$H/.config" "$H/.local" "$H/Pictures" "$H/.bashrc" "$H/.bash_profile" 2>/dev/null || true
 runuser -u "$U" -- env HOME="$H" xdg-user-dirs-update 2>/dev/null || true
-# fetch URL ФАЙЛ [sums]  - скачать; с "sums" сверить SHA256 по SHA256SUMS.txt из того же релиза
+
+# ================= сторонние приложения =================
+# fetch URL ФАЙЛ [sums] - скачать; с "sums" сверить SHA256 по SHA256SUMS.txt из того же релиза
 fetch() {
-curl -fL --retry 3 -o "$2" "$1" || return 1
-[ "${3:-}" = sums ] || return 0
-local want have
-want="$(curl -fsSL "${1%/*}/SHA256SUMS.txt" 2>/dev/null | grep -F "${1##*/}" | awk '{print $1}' | head -n1 || true)"
-have="$(sha256sum "$2" | awk '{print $1}')"
-[ -n "$want" ] && [ "$want" = "$have" ] || { echo "!! контрольная сумма не подтверждена: ${1##*/}"; rm -f "$2"; return 1; }
+  curl -fL --retry 3 -o "$2" "$1" || { rm -f "$2"; return 1; }
+  [ "${3:-}" = sums ] || return 0
+  local want have
+  want="$(curl -fsSL "${1%/*}/SHA256SUMS.txt" 2>/dev/null | grep -F "${1##*/}" | awk '{print $1}' | head -n1 || true)"
+  have="$(sha256sum "$2" | awk '{print $1}')"
+  [ -n "$want" ] && [ "$want" = "$have" ] || { echo "!! контрольная сумма не подтверждена: ${1##*/}"; rm -f "$2"; return 1; }
 }
 # gh_asset РЕПО РЕГУЛЯРКА [?per_page=30] - ссылка на файл из последнего релиза на GitHub
 gh_asset() {
-curl -fsSL "https://api.github.com/repos/$1/releases${3:-/latest}" 2>/dev/null \
-| grep -o 'https://[^"]*' | grep -E "$2" | head -n1 || true
+  curl -fsSL "https://api.github.com/repos/$1/releases${3:-/latest}" 2>/dev/null \
+    | grep -o 'https://[^"]*' | grep -E "$2" | head -n1 || true
 }
 # install_pkg ССЫЛКА ИМЯ [sums] - готовый .pkg.tar.zst
 install_pkg() {
-local f="/tmp/$2.pkg.tar.zst"
-if ! fetch "$1" "$f" "${3:-}"; then
-echo "!! $2 не скачался ($1)."
-echo "!! Скачай .pkg.tar.zst вручную и открой его двойным щелчком в Files (Super+E)."
-return 0
-fi
-pacman -U --noconfirm "$f" || echo "!! $2 не установился (скрипт продолжает работу)"
-rm -f "$f"
+  local f="/tmp/$2.pkg.tar.zst"
+  if ! fetch "$1" "$f" "${3:-}"; then
+    echo "!! $2 не скачался ($1)."
+    echo "!! Скачай .pkg.tar.zst вручную и открой его двойным щелчком в Files (Super+E)."
+    return 0
+  fi
+  pacman -U --noconfirm "$f" || echo "!! $2 не установился (скрипт продолжает работу)"
+  rm -f "$f"
 }
 # install_appimage ССЫЛКА КОМАНДА НАЗВАНИЕ КАТЕГОРИИ [sums]
 install_appimage() {
-local url="$1" bin="$2" title="$3" cats="$4" P="/opt/$2" run icon
-if [ ! -x "$P/squashfs-root/AppRun" ]; then
-mkdir -p "$P"; rm -rf "$P/squashfs-root"
-if fetch "$url" "$P/app.AppImage" "${5:-}"; then
-chmod 755 "$P/app.AppImage"
-( cd "$P" && ./app.AppImage --appimage-extract >/dev/null 2>&1 && rm -f app.AppImage ) || true
-fi
-fi
-chmod -R a+rX "$P" 2>/dev/null || true
-[ ! -f "$P/squashfs-root/chrome-sandbox" ] || { chown root:root "$P/squashfs-root/chrome-sandbox"; chmod 4755 "$P/squashfs-root/chrome-sandbox"; }
-if [ -x "$P/squashfs-root/AppRun" ]; then run="$P/squashfs-root/AppRun"
-elif [ -x "$P/app.AppImage" ]; then run="$P/app.AppImage --appimage-extract-and-run"
-else echo "!! $title не поставился: нет доступа к сайту/GitHub. Включи VPN (Happ) и запусти install.sh ещё раз."; return 0; fi
-printf '#!/bin/sh\n%sexec %s "$@"\n' "${APPENV:-}" "$run" > "/usr/local/bin/$bin"
-chmod 755 "/usr/local/bin/$bin"
-icon="$(find "$P/squashfs-root" -maxdepth 1 -name '*.png' 2>/dev/null | head -n1 || true)"
-[ -n "$icon" ] || icon="$(find "$P/squashfs-root/usr/share/icons" -name '*.png' 2>/dev/null | sort -V | tail -n1 || true)"
-cat > "/usr/share/applications/$bin.desktop" <<DESK_EOF
+  local url="$1" bin="$2" title="$3" cats="$4" P="/opt/$2" run icon src
+  if [ ! -x "$P/squashfs-root/AppRun" ]; then
+    mkdir -p "$P"; rm -rf "$P/squashfs-root"
+    if fetch "$url" "$P/app.AppImage" "${5:-}"; then
+      chmod 755 "$P/app.AppImage"
+      ( cd "$P" && ./app.AppImage --appimage-extract >/dev/null 2>&1 && rm -f app.AppImage ) || true
+    fi
+  fi
+  chmod -R a+rX "$P" 2>/dev/null || true
+  [ ! -f "$P/squashfs-root/chrome-sandbox" ] || { chown root:root "$P/squashfs-root/chrome-sandbox"; chmod 4755 "$P/squashfs-root/chrome-sandbox"; }
+  if [ -x "$P/squashfs-root/AppRun" ]; then run="$P/squashfs-root/AppRun"
+  elif [ -x "$P/app.AppImage" ]; then run="$P/app.AppImage --appimage-extract-and-run"
+  else echo "!! $title не поставился: нет доступа к сайту/GitHub. Включи VPN (Happ) и запусти install.sh ещё раз."; return 0; fi
+  printf '#!/bin/sh\n%sexec %s "$@"\n' "${APPENV:-}" "$run" > "/usr/local/bin/$bin"
+  chmod 755 "/usr/local/bin/$bin"
+  # иконка: сначала .DirIcon (официальная иконка AppImage), потом из usr/share/icons, потом любая png в корне
+  src=""
+  if [ -f "$P/squashfs-root/.DirIcon" ] && [ "$(head -c 4 "$P/squashfs-root/.DirIcon" 2>/dev/null | tail -c 3)" = PNG ]; then
+    src="$P/squashfs-root/.DirIcon"
+  fi
+  [ -n "$src" ] || src="$(find "$P/squashfs-root/usr/share/icons" -name '*.png' 2>/dev/null | sort -V | tail -n1 || true)"
+  [ -n "$src" ] || src="$(find "$P/squashfs-root" -maxdepth 1 -name '*.png' 2>/dev/null | head -n1 || true)"
+  icon=application-x-executable
+  if [ -n "$src" ] && [ -f "$src" ]; then
+    install -Dm644 "$src" "/usr/share/icons/hicolor/256x256/apps/$bin.png"
+    icon="$bin"
+  fi
+  cat > "/usr/share/applications/$bin.desktop" <<DESK_EOF
 [Desktop Entry]
 Type=Application
 Name=$title
 Exec=$bin
-Icon=${icon:-application-x-executable}
+Icon=$icon
 Terminal=false
 Categories=$cats
 DESK_EOF
-echo "ok: $title"
+  echo "ok: $title"
 }
 install_photocraft() {
-local u
-u="$(gh_asset storytold/photocraft 'x86_64.*\.pkg\.tar\.zst$')"
-if [ -n "$u" ]; then install_pkg "$u" photocraft sums; return 0; fi
-u="$(gh_asset storytold/photocraft 'x86_64.*\.AppImage$')"
-if [ -n "$u" ]; then install_appimage "$u" photocraft PhotoCraft "Graphics;" sums; return 0; fi
-echo "!! PhotoCraft: не нашёл сборку. Скачай её (Linux x86_64) со страницы"
-echo "!! https://github.com/storytold/photocraft/releases"
+  local u
+  u="$(gh_asset storytold/photocraft 'x86_64.*\.pkg\.tar\.zst$')"
+  if [ -n "$u" ]; then install_pkg "$u" photocraft sums; return 0; fi
+  u="$(gh_asset storytold/photocraft 'x86_64.*\.AppImage$')"
+  if [ -n "$u" ]; then install_appimage "$u" photocraft PhotoCraft "Graphics;" sums; return 0; fi
+  echo "!! PhotoCraft: не нашёл сборку. Скачай её (Linux x86_64) со страницы"
+  echo "!! https://github.com/storytold/photocraft/releases"
 }
 install_limusic() {
-local u
-u="$(gh_asset SimoHypers/limusic '(x86_64|amd64).*\.AppImage$')"
-if [ -n "$u" ]; then APPENV='export WEBKIT_DISABLE_DMABUF_RENDERER=1
+  local u
+  u="$(gh_asset SimoHypers/limusic '(x86_64|amd64).*\.AppImage$')"
+  if [ -n "$u" ]; then APPENV='export WEBKIT_DISABLE_DMABUF_RENDERER=1
 ' install_appimage "$u" limusic Limusic "AudioVideo;Audio;Player;"
-else echo "!! Limusic: не нашёл AppImage на https://github.com/SimoHypers/limusic/releases"; fi
+  else echo "!! Limusic: не нашёл AppImage на https://github.com/SimoHypers/limusic/releases"; fi
 }
 install_opencode() {
-local u
-u="$(gh_asset anomalyco/opencode 'opencode-desktop-linux-(x86_64|amd64|x64)\.AppImage$' '?per_page=30')"
-if [ -n "$u" ]; then install_appimage "$u" opencode OpenCode "Development;"
-else echo "!! OpenCode: не нашёл AppImage на https://github.com/anomalyco/opencode/releases"; fi
+  local u
+  u="$(gh_asset anomalyco/opencode 'opencode-desktop-linux-(x86_64|amd64|x64)\.AppImage$' '?per_page=30')"
+  if [ -n "$u" ]; then install_appimage "$u" opencode OpenCode "Development;"
+  else echo "!! OpenCode: не нашёл AppImage на https://github.com/anomalyco/opencode/releases"; fi
 }
-if command -v curl >/dev/null 2>&1; then
 install_pkg https://github.com/Happ-proxy/happ-desktop/releases/latest/download/Happ.linux.x64.pkg.tar.zst happ
 install_photocraft
 install_appimage https://download.onlyoffice.com/install/desktop/editors/linux/DesktopEditors-x86_64.AppImage onlyoffice "ONLYOFFICE" "Office;"
 install_limusic
 install_opencode
-else
-echo "!! curl не установился - дополнительные приложения пропущены"
-fi
-# wofi: оставляем только твои приложения, остальные записи прячем (NoDisplay) в ~/.local/share/applications
-allow="$( { for p in steam telegram-desktop prismlauncher happ; do pacman -Ql "$p" 2>/dev/null; done \
-| awk '{print $2}' | grep '^/usr/share/applications/.*\.desktop$' | while read -r f; do basename "$f"; done
-printf '%s\n' firefox.desktop onlyoffice.desktop photocraft.desktop limusic.desktop opencode.desktop; } )"
+gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor 2>/dev/null || true
+
+# ================= wofi: в лаунчере только твои приложения =================
+allow="$( { for p in steam telegram-desktop prismlauncher happ firefox photocraft; do pacman -Ql "$p" 2>/dev/null; done \
+  | awk '{print $2}' | grep '^/usr/share/applications/.*\.desktop$' | while read -r f; do basename "$f"; done
+  printf '%s\n' onlyoffice.desktop photocraft.desktop limusic.desktop opencode.desktop; } )"
 mkdir -p "$H/.local/share/applications"
 for f in /usr/share/applications/*.desktop; do
-[ -e "$f" ] || continue
-b="${f##*/}"; t="$H/.local/share/applications/$b"
-if printf '%s\n' "$allow" | grep -qxF "$b"; then
-{ [ ! -f "$t" ] || ! grep -q '^# hidden-by-install' "$t"; } || rm -f "$t"
-continue
-fi
-{ [ ! -e "$t" ] || grep -q '^# hidden-by-install' "$t"; } || continue
-{ echo '# hidden-by-install'
-awk '/^NoDisplay=/{next} {print} !d && /^\[Desktop Entry\]/{print "NoDisplay=true"; d=1}' "$f"; } > "$t"
+  [ -e "$f" ] || continue
+  b="${f##*/}"; t="$H/.local/share/applications/$b"
+  if printf '%s\n' "$allow" | grep -qxF "$b"; then
+    { [ ! -f "$t" ] || ! grep -q '^# hidden-by-install' "$t"; } || rm -f "$t"
+    continue
+  fi
+  { [ ! -e "$t" ] || grep -q '^# hidden-by-install' "$t"; } || continue
+  { echo '# hidden-by-install'
+    awk '/^NoDisplay=/{next} {print} !d && /^\[Desktop Entry\]/{print "NoDisplay=true"; d=1}' "$f"; } > "$t"
 done
-chown -R "$U:$(id -gn "$U")" "$H/.local" 2>/dev/null || true
+chown -R "$U:$G" "$H/.local" 2>/dev/null || true
 rm -f "$H/.cache/wofi-drun"
+
+# ================= чистка =================
 echo "=== Чистка мусора ==="
 orph="$(pacman -Qdtq 2>/dev/null || true)"
 [ -z "$orph" ] || pacman -Rns --noconfirm $orph || true
@@ -1857,14 +1963,22 @@ pacman -Sc --noconfirm >/dev/null 2>&1 || true
 journalctl --vacuum-size=50M >/dev/null 2>&1 || true
 rm -f /tmp/*.pkg.tar.zst
 rm -rf "$H/.cache/thumbnails"
+
 echo
-echo "Готово. ПЕРЕЗАГРУЗИСЬ (reboot)."
-echo "После входа на TTY1 Hyprland запустится сам."
-echo "NVIDIA: драйверы удалены и не устанавливаются - система работает на встройке (Intel)."
-echo "Steam: запусти из лаунчера (Super+D) уже после входа в Hyprland."
+echo "Готово. ПЕРЕЗАГРУЗИСЬ (reboot). После входа на TTY1 Hyprland запустится сам."
+echo "NVIDIA: драйверы удалены - система работает на встройке (Intel)."
+echo "Обои: положи картинки в ~/Pictures/wall (светлые аниме-обои дадут вид как на фото)."
+echo "Визуализатор: открой терминал и набери  cava"
 echo
 echo "Горячие клавиши:"
-echo "  Super+W           - следующие обои (картинки в ~/Pictures/wall)"
+echo "  Super+Enter       - терминал с fastfetch"
+echo "  Super+D           - лаунчер (повторное нажатие закрывает)"
+echo "  Super+E           - файлы"
+echo "  Super+B           - Firefox"
+echo "  Super+W           - следующие обои"
+echo "  Super+V           - окно: плавающее / тайлинг"
+echo "  Super+F           - полный экран"
 echo "  Super+Shift+Esc   - меню питания (повторное нажатие закрывает)"
-echo "  Super+Q           - закрыть активное окно"
+echo "  Super+Q           - закрыть окно"
 echo "  Super+Shift+Q     - зажми и води курсором: окна под ним закрываются подряд"
+echo "  Super+Shift+S     - скриншот области в буфер"
