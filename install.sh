@@ -1755,9 +1755,9 @@ want="$(curl -fsSL "${1%/*}/SHA256SUMS.txt" 2>/dev/null | grep -F "${1##*/}" | a
 have="$(sha256sum "$2" | awk '{print $1}')"
 [ -n "$want" ] && [ "$want" = "$have" ] || { echo "!! контрольная сумма не подтверждена: ${1##*/}"; rm -f "$2"; return 1; }
 }
-# gh_asset РЕПО РЕГУЛЯРКА - ссылка на файл из последнего релиза на GitHub
+# gh_asset РЕПО РЕГУЛЯРКА [?per_page=30] - ссылка на файл из последнего релиза на GitHub
 gh_asset() {
-curl -fsSL "https://api.github.com/repos/$1/releases/latest" 2>/dev/null \
+curl -fsSL "https://api.github.com/repos/$1/releases${3:-/latest}" 2>/dev/null \
 | grep -o 'https://[^"]*' | grep -E "$2" | head -n1 || true
 }
 # install_pkg ССЫЛКА ИМЯ [sums] - готовый .pkg.tar.zst
@@ -1782,12 +1782,14 @@ chmod 755 "$P/app.AppImage"
 fi
 fi
 chmod -R a+rX "$P" 2>/dev/null || true
+[ ! -f "$P/squashfs-root/chrome-sandbox" ] || { chown root:root "$P/squashfs-root/chrome-sandbox"; chmod 4755 "$P/squashfs-root/chrome-sandbox"; }
 if [ -x "$P/squashfs-root/AppRun" ]; then run="$P/squashfs-root/AppRun"
 elif [ -x "$P/app.AppImage" ]; then run="$P/app.AppImage --appimage-extract-and-run"
 else echo "!! $title не поставился: нет доступа к сайту/GitHub. Включи VPN (Happ) и запусти install.sh ещё раз."; return 0; fi
 printf '#!/bin/sh\n%sexec %s "$@"\n' "${APPENV:-}" "$run" > "/usr/local/bin/$bin"
 chmod 755 "/usr/local/bin/$bin"
 icon="$(find "$P/squashfs-root" -maxdepth 1 -name '*.png' 2>/dev/null | head -n1 || true)"
+[ -n "$icon" ] || icon="$(find "$P/squashfs-root/usr/share/icons" -name '*.png' 2>/dev/null | sort -V | tail -n1 || true)"
 cat > "/usr/share/applications/$bin.desktop" <<DESK_EOF
 [Desktop Entry]
 Type=Application
@@ -1815,18 +1817,25 @@ if [ -n "$u" ]; then APPENV='export WEBKIT_DISABLE_DMABUF_RENDERER=1
 ' install_appimage "$u" limusic Limusic "AudioVideo;Audio;Player;"
 else echo "!! Limusic: не нашёл AppImage на https://github.com/SimoHypers/limusic/releases"; fi
 }
+install_opencode() {
+local u
+u="$(gh_asset anomalyco/opencode 'opencode-desktop-linux-(x86_64|amd64|x64)\.AppImage$' '?per_page=30')"
+if [ -n "$u" ]; then install_appimage "$u" opencode OpenCode "Development;"
+else echo "!! OpenCode: не нашёл AppImage на https://github.com/anomalyco/opencode/releases"; fi
+}
 if command -v curl >/dev/null 2>&1; then
 install_pkg https://github.com/Happ-proxy/happ-desktop/releases/latest/download/Happ.linux.x64.pkg.tar.zst happ
 install_photocraft
 install_appimage https://download.onlyoffice.com/install/desktop/editors/linux/DesktopEditors-x86_64.AppImage onlyoffice "ONLYOFFICE" "Office;"
 install_limusic
+install_opencode
 else
 echo "!! curl не установился - дополнительные приложения пропущены"
 fi
 # wofi: оставляем только твои приложения, остальные записи прячем (NoDisplay) в ~/.local/share/applications
 allow="$( { for p in steam telegram-desktop prismlauncher happ; do pacman -Ql "$p" 2>/dev/null; done \
 | awk '{print $2}' | grep '^/usr/share/applications/.*\.desktop$' | while read -r f; do basename "$f"; done
-printf '%s\n' firefox.desktop onlyoffice.desktop photocraft.desktop limusic.desktop; } )"
+printf '%s\n' firefox.desktop onlyoffice.desktop photocraft.desktop limusic.desktop opencode.desktop; } )"
 mkdir -p "$H/.local/share/applications"
 for f in /usr/share/applications/*.desktop; do
 [ -e "$f" ] || continue
